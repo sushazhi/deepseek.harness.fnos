@@ -84,13 +84,23 @@ func handleFnGateway(c *gin.Context) {
 					bodyBytes, err := io.ReadAll(resp.Body)
 					_ = resp.Body.Close()
 					if err == nil && strings.Contains(string(bodyBytes), "dsh web authentication required") {
-						resp.StatusCode = http.StatusSeeOther
-						resp.Header.Set("Location", fmt.Sprintf("%s/?token=%s", fnGatewayPrefix, url.QueryEscape(token)))
-						resp.Header.Set("Cache-Control", "no-store")
-						resp.Header.Del("Content-Length")
-						resp.Body = io.NopCloser(bytes.NewReader(nil))
-						resp.ContentLength = 0
-						return nil
+						// 防环检查：若当前请求已携带该 Token，说明该 Token 无法通过认证，禁止循环重定向
+						hasSameToken := resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Query().Get("token") == token
+						if !hasSameToken {
+							resp.StatusCode = http.StatusSeeOther
+							resp.Header.Set("Location", fmt.Sprintf("%s/?token=%s", fnGatewayPrefix, url.QueryEscape(token)))
+							resp.Header.Set("Cache-Control", "no-store")
+							resp.Header.Del("Content-Length")
+							// 清理客户端携带的失效官方 Cookie，避免重定向后持续冲突
+							if resp.Request != nil {
+								if reqCookie := resp.Request.Header.Get("Cookie"); reqCookie != "" {
+									clearDshAuthCookies(resp.Header, reqCookie, "/", fnGatewayPrefix, strings.TrimRight(fnGatewayPrefix, "/"))
+								}
+							}
+							resp.Body = io.NopCloser(bytes.NewReader(nil))
+							resp.ContentLength = 0
+							return nil
+						}
 					}
 					resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 				}

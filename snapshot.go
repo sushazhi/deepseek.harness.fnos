@@ -285,7 +285,7 @@ func checkHardwareBaseline(extraDisk uint64) error {
 
 	mem, err := getMemoryInfo()
 	if err == nil && mem.AvailableBytes < MinMemAvailableBytes {
-		return fmt.Errorf("系统可用内存不足 (当前: %s, 要求: >= 1.5 GB)，避免构建或打包被系统 OOM 强杀", formatBytes(mem.AvailableBytes))
+		return fmt.Errorf("系统可用内存不足 (当前: %s, 要求: >= 1.5 GB)，避免部署更新或打包被系统 OOM 强杀", formatBytes(mem.AvailableBytes))
 	}
 
 	cpu, err := getCPUInfo()
@@ -341,6 +341,7 @@ type SnapshotMeta struct {
 	VersionTag       string `json:"version_tag"`
 	PluginCount      int    `json:"plugin_count"`
 	CompressionLevel int    `json:"compression_level,omitempty"`
+	GitCommit        string `json:"git_commit,omitempty"`
 }
 
 // CreateSnapshotParams 创建快照参数
@@ -836,6 +837,10 @@ func RestoreSnapshot(id string) error {
 	var meta SnapshotMeta
 	if err := json.Unmarshal(metaData, &meta); err != nil {
 		return fmt.Errorf("解析快照元数据失败: %w", err)
+	}
+
+	if meta.GitCommit != "" {
+		return fmt.Errorf("该快照由旧版源码架构生成，已不兼容当前版本，无法还原，建议删除")
 	}
 
 	tarPath := filepath.Join(snapDir, "data.tar.gz")

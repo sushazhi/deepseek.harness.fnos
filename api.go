@@ -312,7 +312,7 @@ func handleAction(c *gin.Context) {
 	switch req.Action {
 	case "start", "stop", "restart":
 		if state.Status() == StatusBuilding {
-			Fail(c, http.StatusConflict, "正在构建中，请稍候再试")
+			Fail(c, http.StatusConflict, "正在部署更新中，请稍候再试")
 			return
 		}
 		if state.Status() == StatusSnapshotting {
@@ -341,7 +341,7 @@ func handleAction(c *gin.Context) {
 		}
 	case "upgrade", "rebuild", "repair", "reset":
 		if state.Status() == StatusBuilding {
-			Fail(c, http.StatusConflict, "正在构建中，请稍候再试")
+			Fail(c, http.StatusConflict, "正在部署更新中，请稍候再试")
 			return
 		}
 		if state.Status() == StatusSnapshotting {
@@ -377,7 +377,7 @@ func handleAction(c *gin.Context) {
 	case "upgrade":
 		msg = "开始拉取远程更新并部署…"
 	case "rebuild":
-		msg = "开始重新安装运行环境…"
+		msg = "开始重新部署 DSH…"
 	case "repair", "reset":
 		msg = "开始恢复出厂设置…"
 	}
@@ -400,7 +400,7 @@ func actionErrStatus(err error) int {
 	switch {
 	case strings.Contains(msg, "运行环境未就绪"), strings.Contains(msg, "未就绪"):
 		return http.StatusNotFound
-	case strings.Contains(msg, "构建中"), strings.Contains(msg, "部署中"), strings.Contains(msg, "启动中"), strings.Contains(msg, "运行中"), strings.Contains(msg, "依赖未安装"):
+	case strings.Contains(msg, "构建中"), strings.Contains(msg, "部署中"), strings.Contains(msg, "更新中"), strings.Contains(msg, "启动中"), strings.Contains(msg, "运行中"), strings.Contains(msg, "依赖未安装"):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

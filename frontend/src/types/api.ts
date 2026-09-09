@@ -180,6 +180,7 @@ export interface SnapshotMeta {
   harness_version?: string
   version_tag?: string
   plugin_count?: number
+  git_commit?: string
 }
 
 /**

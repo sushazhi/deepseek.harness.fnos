@@ -111,6 +111,8 @@ func InitAppEnv() {
 	_ = os.MkdirAll(globalHomeDir, 0755)
 	_ = os.Setenv("HOME", globalHomeDir)
 	_ = os.Setenv("CI", "true")
+	// 声明远程环境：触发 DSH 原生远程适配
+	_ = os.Setenv("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")
 
 	storeDir := filepath.Join(globalPnpmHome, "store")
 	_ = os.Setenv("PNPM_HOME", globalPnpmHome)

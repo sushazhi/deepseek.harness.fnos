@@ -482,7 +482,7 @@ func setPluginRunning() error {
 		return fmt.Errorf("插件操作正在进行中，请稍候")
 	}
 	if state.Status() == StatusBuilding {
-		return fmt.Errorf("正在构建中，请稍候再试")
+		return fmt.Errorf("正在部署更新中，请稍候再试")
 	}
 	if state.Status() == StatusStarting {
 		return fmt.Errorf("服务正在启动中，请稍候再试")

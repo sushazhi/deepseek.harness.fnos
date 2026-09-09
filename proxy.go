@@ -458,6 +458,9 @@ func startReverseProxyLocked() error {
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(proxyTarget)
 			pr.SetXForwarded()
+			// 统一回环 Host 标头，保证上游计算的 authority 恒定
+			pr.Out.Host = proxyTarget.Host
+			pr.Out.Header.Set("Host", proxyTarget.Host)
 			// 改写为目标同源 Origin，保留标头供插件使用并防止上游 CSRF 校验失败
 			if pr.Out.Header.Get("Origin") != "" {
 				pr.Out.Header.Set("Origin", fmt.Sprintf("%s://%s", proxyTarget.Scheme, proxyTarget.Host))
@@ -486,13 +489,23 @@ func startReverseProxyLocked() error {
 					bodyBytes, err := io.ReadAll(resp.Body)
 					_ = resp.Body.Close()
 					if err == nil && strings.Contains(string(bodyBytes), "dsh web authentication required") {
-						resp.StatusCode = http.StatusSeeOther
-						resp.Header.Set("Location", fmt.Sprintf("/?token=%s", url.QueryEscape(token)))
-						resp.Header.Set("Cache-Control", "no-store")
-						resp.Header.Del("Content-Length")
-						resp.Body = io.NopCloser(bytes.NewReader(nil))
-						resp.ContentLength = 0
-						return nil
+						// 防环检查：若当前请求已携带该 Token，说明该 Token 无法通过认证，禁止循环重定向
+						hasSameToken := resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Query().Get("token") == token
+						if !hasSameToken {
+							resp.StatusCode = http.StatusSeeOther
+							resp.Header.Set("Location", fmt.Sprintf("/?token=%s", url.QueryEscape(token)))
+							resp.Header.Set("Cache-Control", "no-store")
+							resp.Header.Del("Content-Length")
+							// 清理客户端携带的失效官方 Cookie，避免重定向后持续冲突
+							if resp.Request != nil {
+								if reqCookie := resp.Request.Header.Get("Cookie"); reqCookie != "" {
+									clearDshAuthCookies(resp.Header, reqCookie, "/")
+								}
+							}
+							resp.Body = io.NopCloser(bytes.NewReader(nil))
+							resp.ContentLength = 0
+							return nil
+						}
 					}
 					resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 				}
@@ -623,7 +636,7 @@ func proxyErrMessage() string {
 	case StatusRunning:
 		return "服务响应异常"
 	case StatusBuilding:
-		return "服务正在构建"
+		return "服务正在部署更新"
 	case StatusSnapshotting:
 		return "服务快照维护中"
 	case StatusStopped:
@@ -734,7 +747,7 @@ func injectHtmlPolyfill(body []byte) []byte {
 	return injectHtmlHead(body, []byte(httpPolyfillScript))
 }
 
-// hasDshAuthCookie 判断 Cookie 标头是否包含官方 dsh-auth- 会话凭证
+// hasDshAuthCookie 判断 Cookie 标头是否包含官方 dsh-auth- 会话凭证（且具备非空有效值）
 func hasDshAuthCookie(cookieHeader string) bool {
 	if cookieHeader == "" {
 		return false
@@ -742,10 +755,35 @@ func hasDshAuthCookie(cookieHeader string) bool {
 	for _, part := range strings.Split(cookieHeader, ";") {
 		part = strings.TrimSpace(part)
 		if strings.HasPrefix(part, "dsh-auth-") {
-			return true
+			if idx := strings.IndexByte(part, '='); idx != -1 {
+				if strings.TrimSpace(part[idx+1:]) != "" {
+					return true
+				}
+			}
 		}
 	}
 	return false
+}
+
+// clearDshAuthCookies 在响应中写入清除失效官方会话凭据的 Set-Cookie 标头
+func clearDshAuthCookies(header http.Header, cookieHeader string, paths ...string) {
+	if cookieHeader == "" {
+		return
+	}
+	if len(paths) == 0 {
+		paths = []string{"/"}
+	}
+	for _, part := range strings.Split(cookieHeader, ";") {
+		part = strings.TrimSpace(part)
+		if strings.HasPrefix(part, "dsh-auth-") {
+			if idx := strings.IndexByte(part, '='); idx != -1 {
+				name := strings.TrimSpace(part[:idx])
+				for _, p := range paths {
+					header.Add("Set-Cookie", fmt.Sprintf("%s=; Path=%s; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax", name, p))
+				}
+			}
+		}
+	}
 }
 
 // rewriteProxyManifest 注入修改 PWA manifest 中的应用图标为 /pwa-icon.svg

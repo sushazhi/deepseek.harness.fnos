@@ -131,7 +131,12 @@ export const useSystemStore = defineStore('system', () => {
   const statusLabel = computed(() => {
     if (isRunning.value) return '运行中'
     if (isStarting.value) return '启动中'
-    if (isBuilding.value) return '构建中'
+    if (isBuilding.value) {
+      if (activeAction.value === 'upgrade' || statusData.value.last_message?.includes('更新')) {
+        return '更新中'
+      }
+      return '部署中'
+    }
     if (isSnapshotting.value) return '快照中'
     return '已停止'
   })

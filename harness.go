@@ -278,7 +278,7 @@ func Start() error {
 	defer procMu.Unlock()
 
 	if state.Status() == StatusBuilding {
-		return fmt.Errorf("正在构建中，请稍候再试")
+		return fmt.Errorf("正在部署更新中，请稍候再试")
 	}
 	if state.Status() == StatusSnapshotting {
 		return fmt.Errorf("正在执行快照维护，请稍候再试")
@@ -290,7 +290,7 @@ func Start() error {
 		return fmt.Errorf("服务已在运行中")
 	}
 	if !isRuntimeReady() {
-		return fmt.Errorf("运行环境未就绪或关键构建产物缺失")
+		return fmt.Errorf("运行环境未就绪或核心依赖缺失")
 	}
 
 	return startLocked()
@@ -499,7 +499,7 @@ func Restart() error {
 }
 
 func restartService() {
-	LogInfo("构建完成，正在重启服务")
+	LogInfo("部署完成，正在重启服务")
 	stopAndWait()
 	state.SetStatus(StatusStopped, "")
 	if err := Start(); err != nil {

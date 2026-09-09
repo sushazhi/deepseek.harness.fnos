@@ -211,9 +211,9 @@ func Upgrade() {
 	go update(false)
 }
 
-// Rebuild 触发强制重新安装运行环境
+// Rebuild 触发强制重新部署 DSH
 func Rebuild() {
-	state.SetStatus(StatusBuilding, "正在准备强制重新安装运行环境...")
+	state.SetStatus(StatusBuilding, "正在准备重新部署 DSH...")
 	go update(true)
 }
 
@@ -332,15 +332,48 @@ func installDshFromNpm(targetVersion string) error {
 func update(forceRebuild bool) {
 	stopAndWait()
 
+	if forceRebuild {
+		// 重新部署：安装 config.json 中记录的当前版本
+		targetVer := strings.TrimPrefix(strings.TrimSpace(GetConfig().Version), "v")
+		if targetVer == "" || targetVer == "-" {
+			LogWarning("重新部署失败: 配置文件中未记录有效的当前版本")
+			state.SetStatus(StatusStopped, "重新部署失败: 配置文件未记录当前版本")
+			return
+		}
+
+		state.SetStatus(StatusBuilding, fmt.Sprintf("正在重新部署 DSH (v%s)...", targetVer))
+		state.SetTargetVersion(targetVer)
+
+		_ = safeRemoveAll(filepath.Join(runtimeDir, "node_modules"))
+
+		if err := installDshFromNpm(targetVer); err != nil {
+			LogWarning("NPM 重新部署失败: %s", err)
+			state.SetStatus(StatusStopped, "重新部署失败: "+err.Error())
+			return
+		}
+
+		verAfter := readVersion()
+		LogInfo("NPM 运行时重新部署成功: %s", verAfter)
+		refreshVersion()
+		SetBuildTime(time.Now())
+		state.SetStatus(StatusStopped, "")
+		restartService()
+		return
+	}
+
+	// 检查更新与在线升级：检测 NPM 上游最新发布版本
 	info, err := fetchRemoteNpmInfo(dshPackageName)
 	targetVer := ""
 	if err == nil && info != nil {
 		targetVer = resolveTargetVersion(info)
 	}
 
-	verBefore := readVersion()
-	// 非强制重建且目标版本不高于本地版本时跳过更新
-	if !forceRebuild && targetVer != "" && verBefore != "" && CompareSemver(targetVer, verBefore) <= 0 {
+	verBefore := strings.TrimPrefix(strings.TrimSpace(GetConfig().Version), "v")
+	if verBefore == "" || verBefore == "-" {
+		verBefore = readVersion()
+	}
+
+	if targetVer != "" && verBefore != "" && CompareSemver(targetVer, verBefore) <= 0 {
 		LogInfo("当前运行版本 (v%s) 已高于或等于远端目标版本 (v%s)，跳过更新", verBefore, targetVer)
 		state.SetStatus(StatusStopped, "")
 		restartService()
@@ -350,10 +383,6 @@ func update(forceRebuild bool) {
 	state.SetStatus(StatusBuilding, fmt.Sprintf("正在通过 NPM 部署更新 [%s → %s]...", verBefore, targetVer))
 	if targetVer != "" {
 		state.SetTargetVersion(targetVer)
-	}
-
-	if forceRebuild {
-		_ = safeRemoveAll(filepath.Join(runtimeDir, "node_modules"))
 	}
 
 	if err := installDshFromNpm(targetVer); err != nil {

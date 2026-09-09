@@ -80,6 +80,12 @@
                     class="shrink-0 font-mono text-[10px] sm:text-xs bg-slate-100 dark:bg-white/[0.08] text-slate-600 dark:text-slate-300">
                     {{ formatSnapshotVersion(item) }}
                   </n-tag>
+
+                  <!-- 旧版不兼容标签 -->
+                  <n-tag v-if="item.git_commit" type="warning" size="tiny" :bordered="false"
+                    class="shrink-0 text-[10px] sm:text-xs">
+                    不兼容
+                  </n-tag>
                 </div>
 
                 <!-- 附属元信息：时间微图标、物理大小、插件数 -->
@@ -102,7 +108,25 @@
             <!-- 右侧 / 移动端底部操作栏 -->
             <div
               class="flex items-center justify-end gap-2 shrink-0 pt-2 border-t border-slate-100/80 dark:border-white/[0.04] sm:border-0 sm:pt-0">
-              <n-button secondary type="primary" size="small" :disabled="actionLoading" @click="promptRestore(item)"
+              <n-tooltip v-if="item.git_commit" trigger="hover">
+                <template #trigger>
+                  <span>
+                    <n-button secondary type="primary" size="small" disabled
+                      class="!h-7 sm:!h-8 !px-2.5 sm:!px-3 rounded-lg text-xs font-medium opacity-50 cursor-not-allowed">
+                      <template #icon>
+                        <n-icon>
+                          <Rotate />
+                        </n-icon>
+                      </template>
+                      还原
+                    </n-button>
+                  </span>
+                </template>
+                该快照基于旧版源码生成，已不兼容，建议删除
+              </n-tooltip>
+
+              <n-button v-else secondary type="primary" size="small" :disabled="actionLoading"
+                @click="promptRestore(item)"
                 class="!h-7 sm:!h-8 !px-2.5 sm:!px-3 rounded-lg text-xs font-medium transition-transform duration-150 active:scale-95">
                 <template #icon>
                   <n-icon>
@@ -168,6 +192,7 @@ import {
   NProgress,
   NCollapseTransition,
   NSpin,
+  NTooltip,
   useMessage,
   useDialog
 } from 'naive-ui'

@@ -5,10 +5,10 @@
       class="sticky -top-[14px] sm:-top-6 z-20 -mt-3.5 sm:-mt-4 pt-5 sm:pt-7 pb-2 sm:pb-2.5 bg-[#f5f7fa]/90 dark:bg-[#12141a]/90 backdrop-blur-md flex items-center justify-between gap-3 w-full min-w-0 transition-all duration-200">
       <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight shrink-0">概览</h1>
 
-      <!-- 右侧构建时间 -->
+      <!-- 右侧部署时间 -->
       <span v-if="statusData.build_time" class="text-xs font-mono text-slate-400 dark:text-slate-500 truncate"
-        :title="`Build: ${statusData.build_time}`">
-        Build: {{ statusData.build_time }}
+        :title="`Deploy: ${statusData.build_time}`">
+        Deploy: {{ statusData.build_time }}
       </span>
     </div>
 
@@ -25,8 +25,7 @@
                   {{ statusData.name || 'DeepSeek Harness' }}
                 </span>
                 <!-- 更新安装过程中的目标版本动态小徽章 -->
-                <n-tag
-                  v-if="isBuilding && targetVersion && statusData.version && statusData.version !== targetVersion"
+                <n-tag v-if="isBuilding && targetVersion && statusData.version && statusData.version !== targetVersion"
                   type="info" size="small" round :bordered="false"
                   class="font-mono text-xs bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold px-2 flex items-center gap-1 shadow-sm shrink-0">
                   <template #icon>
@@ -160,7 +159,7 @@
 
     <!-- 底部状态通知区 -->
     <div v-auto-animate class="space-y-3">
-      <!-- 实时构建进度 / 启动中 / 快照中 / 错误信息 -->
+      <!-- 实时更新与部署进度 / 启动中 / 快照中 / 错误信息 -->
       <n-alert v-if="statusData.last_message" :type="isBuilding || isStarting || isSnapshotting ? 'info' : 'warning'"
         :show-icon="true" class="rounded-2xl shadow-sm">
         {{ statusData.last_message }}
@@ -308,6 +307,8 @@ interface ActionCard {
 }
 
 const isRestarting = computed(() => activeAction.value === 'restart')
+const isRebuilding = computed(() => activeAction.value === 'rebuild' || (isBuilding.value && Boolean(statusData.value.last_message?.includes('重新部署'))))
+const isUpgrading = computed(() => activeAction.value === 'upgrade' || (isBuilding.value && !isRebuilding.value))
 const showStopCard = computed(() => isRunning.value || isRestarting.value)
 
 const actionCards = computed<ActionCard[]>(() => [
@@ -346,22 +347,22 @@ const actionCards = computed<ActionCard[]>(() => [
     action: 'check_update',
     icon: Download,
     label: isCheckingUpdate.value ? '检查中…' : '检查更新',
-    desc: '检查 NPM 远程官方版本，检测到新版本时一键下载更新并重启',
+    desc: '检测 NPM 上游最新版本，在线升级 DSH',
     iconBg: 'bg-blue-50 dark:bg-blue-950/30 group-hover:bg-blue-100 dark:group-hover:bg-blue-950/50',
     iconColor: 'text-fnos-blue dark:text-blue-400',
     disabled: isActionLocked.value || isCheckingUpdate.value,
-    loading: isCheckingUpdate.value || activeAction.value === 'upgrade' || (isBuilding.value && activeAction.value !== 'rebuild')
+    loading: isCheckingUpdate.value || isUpgrading.value
   },
   {
     action: 'rebuild',
     icon: Tools,
-    label: '环境重建',
-    desc: '清理依赖缓存并从 NPM 重新安装官方纯净运行时',
+    label: '重新部署',
+    desc: '清空本地依赖缓存，重新在线安装当前版本 DSH',
     iconBg: 'bg-purple-50 dark:bg-purple-950/30 group-hover:bg-purple-100 dark:group-hover:bg-purple-950/50',
     iconColor: 'text-purple-600 dark:text-purple-400',
-    disabled: isActionLocked.value && activeAction.value !== 'rebuild',
-    loading: activeAction.value === 'rebuild',
-    confirmText: '环境重建将清理依赖缓存并重新安装官方 NPM 运行时，确定继续？'
+    disabled: isActionLocked.value && !isRebuilding.value,
+    loading: isRebuilding.value,
+    confirmText: '此操作将清理本地依赖缓存并重新安装当前版本的 DSH，确定继续？'
   }
 ])
 
@@ -369,7 +370,7 @@ const confirmUpgrade = async () => {
   showUpdateModal.value = false
   const res = await systemStore.sendAction('upgrade')
   if (res.success) {
-    message.success(res.message || '已开始更新并构建')
+    message.success(res.message || '已开始拉取更新并部署')
   } else {
     message.error(res.message || '更新启动失败')
   }

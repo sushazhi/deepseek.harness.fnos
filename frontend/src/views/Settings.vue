@@ -224,7 +224,7 @@
                           <Help />
                         </n-icon>
                       </template>
-                      用于插件安装与项目构建时的 npm/pnpm 依赖包下载
+                      用于插件安装与环境更新时的 npm/pnpm 依赖包下载
                     </n-tooltip>
                   </div>
                 </template>

@@ -6,7 +6,7 @@
 
 ## 一、设计目标与原则
 
-- **零侵入原则**：完全不修改 DSH 上游源码（`deepseek-harness`），保持 DSH 核心代码的纯净性，方便后续直接升级。
+- **零侵入原则**：完全不修改 DSH 官方 NPM 运行时（`@deepseek-ai/dsh`），保持 DSH 核心代码的纯净性，方便后续直接升级。
 - **全场景适配**：
   1. **飞牛网关模式**：子路径代理（`http://<NAS_IP>:5666/app/deepseek-harness/fngateway/`）；
   2. **独立代理模式**：独立端口（`https://<NAS_IP>:2299/`）；
@@ -24,6 +24,8 @@
 | **3** | HTTP 局域网访问时控制台报错 `randomUUID is not a function` | 现代浏览器将 `crypto.randomUUID()` 限制在安全上下文（HTTPS / localhost），普通 HTTP IP 无法使用 | 在 HTML 头部注入纯 JS 实现的 RFC4122 v4 UUID 生成器，Polyfill 到 `window.crypto`（上游已引入 `@deepseek-ai/dsh-util-crypto`，此处作为全环境兜底防御） | `proxy.go`<br>`fngateway.go` |
 | **4** | 反代下「插件配置」面板空白、模型设置无法读取保存 | DSH 客户端 `@deepseek-ai/dsh-client-connection` 依 `location.hostname` 判定 `isLoopback`；非 127.0.0.1 时将配置模式置为 `'memory'` 并拒绝向后端拉取数据 | **双重安全防护机制**：<br>1. 注入 `window.__DSH_TRANSPORT__ = { ownsHost: true }` 走通上游原生特权分支；<br>2. Hook `window.__ModuleLoader__`，在注册 `connection` 服务时劫持 `handle.isLoopback = true`（保持 JS 产物 100% 原始纯净，不进行暴力文本替换） | `proxy.go`<br>`fngateway.go` |
 | **5** | 远程 Web 访问时右上角显示红字“无法打开配置文件” | 官方设计中该按钮会调用桌面 GUI 编辑器（如 `xdg-open`），在 Linux 无头 NAS 服务器上无法执行 | 注入 `<style>[data-slot="settings.action"] { display: none !important; }</style>`，隐藏无头环境下无意义的桌面级操作 | `proxy.go`<br>`fngateway.go` |
+| **6** | 会话头部出现“在 Zed 中打开工作目录”等无效分体按钮 | DSH 上游新增 `open-in-app` 桌面级功能；因后台守护进程无 SSH 标记，DSH 误判为本地个人电脑并探测本地应用渲染了启动按钮 | 在全局环境初始化 `InitAppEnv()` 时注入 `SSH_CONNECTION=127.0.0.1 0 127.0.0.1 22`，触发 DSH 原生远程无头环境模式，应用列表自动置空并隐藏该按钮 | `config.go` |
+| **7** | 反代端口打开报 **ERR_TOO_MANY_REDIRECTS**（换新浏览器却正常） | 浏览器存有历史失效的 `dsh-auth-` Cookie，反代无条件拦截 401 触发 303 重定向，形成自身循环重定向 | 1. 显式固定反代发往后端的 `Host` 标头为回环目标，确保 authority 计算恒定；<br>2. 增加防环检查，已携带同名 Token 的请求禁止重复重定向；<br>3. 触发 303 时在响应头中强制清除失效 `dsh-auth-` Cookie | `proxy.go`<br>`fngateway.go` |
 
 ---
 
@@ -139,6 +141,17 @@ if (window.__ModuleLoader__) {
 ```
 隐藏原版仅能在本地图形桌面环境下使用的“打开配置文件”按钮，避免在 Linux 服务器下报出无头错误。
 
+### 5. 远程运行环境声明（消除 Open In 按钮与无头环境桌面弹窗）
+在 `config.go` 的全局环境初始化 `InitAppEnv()` 中统一注入环境变量：
+```go
+_ = os.Setenv("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")
+```
+- **核心机制**：DSH 内部通过 `launchedThroughSsh(launchEnvironmentOf(ctx))` 判定是否存在 `SSH_CONNECTION` 或 `SSH_TTY`；
+- **效果对齐**：
+  1. `@deepseek-ai/dsh-host-open-in-app` 检测到 SSH 远程标记后，探测结果返回空映射 `new Map()`，前端 `@deepseek-ai/dsh-client-ui-open-in-app` 自动销毁分体胶囊按钮，不占用任何 DOM；
+  2. 自动切换目录选择器为适用于远程 Web 的 `browse` 模式，杜绝在无头 Linux 上调用 `zenity`/`kdialog` 导致异常；
+  3. 彻底禁用后台进程在无头服务器上尝试打开本地浏览器的行为。
+
 ---
 
 ## 四、维护与排查指南
@@ -155,5 +168,5 @@ if (window.__ModuleLoader__) {
   预期结果：返回 `ok: true`，且包含 `shell`、`agent-loop`、`web-search-deepseek` 等命名空间。
 
 ### 2. DSH 上游版本升级时的注意事项
-- 如果升级 DSH 版本，只需替换源码，**无需重新为前端打 patch**；
+- 如果升级 DSH 版本，只需在线更新或替换 NPM 离线包，**无需重新为前端打 patch**；
 - 升级后只需检查 DSH 的 `connection` 服务名是否有重大架构变动即可。

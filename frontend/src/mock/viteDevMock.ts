@@ -54,9 +54,9 @@ export function viteDevMock(): Plugin {
           name: '初始稳定生产版',
           created_at: Math.floor(Date.now() / 1000) - 86400 * 3,
           size_bytes: 1480000000,
-          app_version: '0.3.0',
-          harness_version: '0.1.4',
-          version_tag: 'v0.1.4',
+          app_version: '0.3.1',
+          harness_version: '0.1.5-alpha.1',
+          version_tag: 'v0.1.5-alpha.1',
           plugin_count: 2
         },
         {
@@ -64,10 +64,21 @@ export function viteDevMock(): Plugin {
           name: '测试第三方插件前备份',
           created_at: Math.floor(Date.now() / 1000) - 3600 * 5,
           size_bytes: 1720000000,
-          app_version: '0.3.0',
-          harness_version: '0.1.4',
-          version_tag: 'v0.1.4',
+          app_version: '0.3.1',
+          harness_version: '0.1.5-alpha.1',
+          version_tag: 'v0.1.5-alpha.1',
           plugin_count: 2
+        },
+        {
+          id: 'snap_20260905_111139_d91acf',
+          name: '旧版源码快照 (v0.1.3)',
+          created_at: Math.floor(Date.now() / 1000) - 86400 * 5,
+          size_bytes: 872800000,
+          app_version: '0.2.8',
+          harness_version: '0.1.3-alpha.1',
+          version_tag: 'v0.1.3-alpha.1 (d347e70)',
+          git_commit: 'd347e703908d0406b7a7ef80e3a0e594d86b2215',
+          plugin_count: 1
         }
       ]
 
@@ -278,7 +289,7 @@ export function viteDevMock(): Plugin {
         })
       }
 
-      function sendJson(res: ServerResponse, code: number, message: string, data: unknown) {
+      function sendJson(res: ServerResponse, code: number, message: string, data: unknown = null) {
         res.setHeader('Content-Type', 'application/json; charset=utf-8')
         res.end(JSON.stringify({ code, message, data, timestamp: Date.now() }))
       }
@@ -370,14 +381,16 @@ export function viteDevMock(): Plugin {
           }
 
           if (action === 'upgrade' || action === 'rebuild') {
+            const isRebuild = action === 'rebuild'
+            const nextVersion = isRebuild ? (config.version || '0.1.4') : '0.1.5-alpha.2'
             status = 'building'
-            targetVersion = '0.1.5-alpha.2'
-            lastMessage = action === 'upgrade' ? '正在拉取远程 NPM 更新并部署...' : '正在重新安装 NPM 核心运行环境...'
-            appendLog(`[INFO] 开始执行 ${action === 'upgrade' ? 'NPM 官方包版本升级' : 'NPM 运行环境重新部署'}`)
+            targetVersion = nextVersion
+            lastMessage = isRebuild ? `正在重新部署 DSH (v${nextVersion})...` : '正在拉取远程更新并部署...'
+            appendLog(`[INFO] 开始执行 ${isRebuild ? '重新部署 DSH (当前版本)' : '版本更新'}`)
             broadcast('status', getStatusPayload())
 
             setTimeout(() => {
-              appendLog('[INFO] 正在执行 npm install @deepseek-ai/dsh@0.1.5-alpha.2 --save...')
+              appendLog(`[INFO] 正在执行 npm install @deepseek-ai/dsh@${nextVersion} --save...`)
               setTimeout(() => {
                 appendLog('[INFO] NPM 核心运行时部署完成，正在重启服务...')
                 status = 'starting'
@@ -390,7 +403,7 @@ export function viteDevMock(): Plugin {
                   startedAt = Math.floor(Date.now() / 1000)
                   targetVersion = ''
                   lastMessage = ''
-                  config.version = '0.1.5-alpha.2'
+                  config.version = nextVersion
                   config.build_time = new Date().toISOString().replace('T', ' ').substring(0, 16)
                   appendLog('[INFO] [状态变更] building → running: 运行环境就绪并成功拉起')
                   broadcast('status', getStatusPayload())
@@ -398,7 +411,7 @@ export function viteDevMock(): Plugin {
               }, 1000)
             }, 1000)
 
-            return sendJson(res, 0, '已开始部署更新', getStatusPayload())
+            return sendJson(res, 0, isRebuild ? '开始重新部署 DSH…' : '已开始部署更新', getStatusPayload())
           }
 
           return sendJson(res, 0, '操作成功', getStatusPayload())
@@ -715,6 +728,13 @@ export function viteDevMock(): Plugin {
         }
 
         if (path.includes('/api/snapshots/') && path.endsWith('/restore') && req.method === 'POST') {
+          const parts = path.split('/')
+          const snapId = parts[parts.length - 2]
+          const snap = mockSnapshots.find((s) => s.id === snapId)
+          if (snap && snap.git_commit) {
+            return sendJson(res, 400, '该快照由旧版源码架构生成，已不兼容当前版本，无法还原，建议删除', null)
+          }
+
           const oldStatus = status
           status = 'snapshotting'
           lastMessage = '停止服务准备还原快照...'
