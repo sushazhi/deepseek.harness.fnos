@@ -84,13 +84,26 @@ func handleFnGateway(c *gin.Context) {
 					bodyBytes, err := io.ReadAll(resp.Body)
 					_ = resp.Body.Close()
 					if err == nil && strings.Contains(string(bodyBytes), "dsh web authentication required") {
-						// 防环检查：若当前请求已携带该 Token，说明该 Token 无法通过认证，禁止循环重定向
+						// 防环检查：若当前请求已携带该 Token，或短时间内已尝试过换票，禁止再次重定向以彻底阻断死循环
 						hasSameToken := resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Query().Get("token") == token
-						if !hasSameToken {
+						hasExchCookie := false
+						if resp.Request != nil {
+							if reqCookie := resp.Request.Header.Get("Cookie"); reqCookie != "" {
+								for _, part := range strings.Split(reqCookie, ";") {
+									if strings.TrimSpace(part) == dshExchangeCookie+"=1" {
+										hasExchCookie = true
+										break
+									}
+								}
+							}
+						}
+						if !hasSameToken && !hasExchCookie {
 							resp.StatusCode = http.StatusSeeOther
 							resp.Header.Set("Location", fmt.Sprintf("%s/?token=%s", fnGatewayPrefix, url.QueryEscape(token)))
 							resp.Header.Set("Cache-Control", "no-store")
 							resp.Header.Del("Content-Length")
+							// 标记本次已触发换票重定向，5 秒内禁止再次自动发起重定向换票
+							resp.Header.Add("Set-Cookie", fmt.Sprintf("%s=1; Path=%s; Max-Age=5; HttpOnly; SameSite=Lax", dshExchangeCookie, fnGatewayPrefix))
 							// 清理客户端携带的失效官方 Cookie，避免重定向后持续冲突
 							if resp.Request != nil {
 								if reqCookie := resp.Request.Header.Get("Cookie"); reqCookie != "" {
@@ -100,6 +113,10 @@ func handleFnGateway(c *gin.Context) {
 							resp.Body = io.NopCloser(bytes.NewReader(nil))
 							resp.ContentLength = 0
 							return nil
+						}
+						// 若已发生过换票重定向依然 401，清理换票标记并放行错误，彻底防止死循环
+						if hasExchCookie {
+							resp.Header.Add("Set-Cookie", fmt.Sprintf("%s=; Path=%s; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax", dshExchangeCookie, fnGatewayPrefix))
 						}
 					}
 					resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))

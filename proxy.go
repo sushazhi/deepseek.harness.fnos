@@ -47,6 +47,7 @@ const (
 	authLoginPath       = "/_harness_auth"
 	authMaxAttempts     = 3
 	authLockoutDuration = 1 * time.Hour
+	dshExchangeCookie   = "_dsh_exch"
 )
 
 type clientAuthStatus struct {
@@ -489,13 +490,26 @@ func startReverseProxyLocked() error {
 					bodyBytes, err := io.ReadAll(resp.Body)
 					_ = resp.Body.Close()
 					if err == nil && strings.Contains(string(bodyBytes), "dsh web authentication required") {
-						// 防环检查：若当前请求已携带该 Token，说明该 Token 无法通过认证，禁止循环重定向
+						// 防环检查：若当前请求已携带该 Token，或短时间内已尝试过换票，禁止再次重定向以彻底阻断死循环
 						hasSameToken := resp.Request != nil && resp.Request.URL != nil && resp.Request.URL.Query().Get("token") == token
-						if !hasSameToken {
+						hasExchCookie := false
+						if resp.Request != nil {
+							if reqCookie := resp.Request.Header.Get("Cookie"); reqCookie != "" {
+								for _, part := range strings.Split(reqCookie, ";") {
+									if strings.TrimSpace(part) == dshExchangeCookie+"=1" {
+										hasExchCookie = true
+										break
+									}
+								}
+							}
+						}
+						if !hasSameToken && !hasExchCookie {
 							resp.StatusCode = http.StatusSeeOther
 							resp.Header.Set("Location", fmt.Sprintf("/?token=%s", url.QueryEscape(token)))
 							resp.Header.Set("Cache-Control", "no-store")
 							resp.Header.Del("Content-Length")
+							// 标记本次已触发换票重定向，5 秒内禁止再次自动发起重定向换票
+							resp.Header.Add("Set-Cookie", fmt.Sprintf("%s=1; Path=/; Max-Age=5; HttpOnly; SameSite=Lax", dshExchangeCookie))
 							// 清理客户端携带的失效官方 Cookie，避免重定向后持续冲突
 							if resp.Request != nil {
 								if reqCookie := resp.Request.Header.Get("Cookie"); reqCookie != "" {
@@ -506,8 +520,23 @@ func startReverseProxyLocked() error {
 							resp.ContentLength = 0
 							return nil
 						}
+						// 若已发生过换票重定向依然 401，清理换票标记并放行错误，彻底防止死循环
+						if hasExchCookie {
+							resp.Header.Add("Set-Cookie", fmt.Sprintf("%s=; Path=/; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax", dshExchangeCookie))
+						}
 					}
 					resp.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+				}
+			}
+
+			// 改写上游重定向地址，去除回环主机头防止协议漂移
+			if loc := resp.Header.Get("Location"); loc != "" {
+				if u, err := url.Parse(loc); err == nil && u.Host != "" {
+					if strings.HasPrefix(u.Host, "127.0.0.1") || strings.HasPrefix(u.Host, "localhost") {
+						u.Scheme = ""
+						u.Host = ""
+						resp.Header.Set("Location", u.String())
+					}
 				}
 			}
 
@@ -780,6 +809,7 @@ func clearDshAuthCookies(header http.Header, cookieHeader string, paths ...strin
 				name := strings.TrimSpace(part[:idx])
 				for _, p := range paths {
 					header.Add("Set-Cookie", fmt.Sprintf("%s=; Path=%s; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=Lax", name, p))
+					header.Add("Set-Cookie", fmt.Sprintf("%s=; Path=%s; Max-Age=0; Expires=Thu, 01 Jan 1970 00:00:00 GMT; HttpOnly; SameSite=None; Secure", name, p))
 				}
 			}
 		}

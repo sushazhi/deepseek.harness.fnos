@@ -25,7 +25,7 @@
 | **4** | 反代下「插件配置」面板空白、模型设置无法读取保存 | DSH 客户端 `@deepseek-ai/dsh-client-connection` 依 `location.hostname` 判定 `isLoopback`；非 127.0.0.1 时将配置模式置为 `'memory'` 并拒绝向后端拉取数据 | **双重安全防护机制**：<br>1. 注入 `window.__DSH_TRANSPORT__ = { ownsHost: true }` 走通上游原生特权分支；<br>2. Hook `window.__ModuleLoader__`，在注册 `connection` 服务时劫持 `handle.isLoopback = true`（保持 JS 产物 100% 原始纯净，不进行暴力文本替换） | `proxy.go`<br>`fngateway.go` |
 | **5** | 远程 Web 访问时右上角显示红字“无法打开配置文件” | 官方设计中该按钮会调用桌面 GUI 编辑器（如 `xdg-open`），在 Linux 无头 NAS 服务器上无法执行 | 注入 `<style>[data-slot="settings.action"] { display: none !important; }</style>`，隐藏无头环境下无意义的桌面级操作 | `proxy.go`<br>`fngateway.go` |
 | **6** | 会话头部出现“在 Zed 中打开工作目录”等无效分体按钮 | DSH 上游新增 `open-in-app` 桌面级功能；因后台守护进程无 SSH 标记，DSH 误判为本地个人电脑并探测本地应用渲染了启动按钮 | 在全局环境初始化 `InitAppEnv()` 时注入 `SSH_CONNECTION=127.0.0.1 0 127.0.0.1 22`，触发 DSH 原生远程无头环境模式，应用列表自动置空并隐藏该按钮 | `config.go` |
-| **7** | 反代端口打开报 **ERR_TOO_MANY_REDIRECTS**（换新浏览器却正常） | 浏览器存有历史失效的 `dsh-auth-` Cookie，反代无条件拦截 401 触发 303 重定向，形成自身循环重定向 | 1. 显式固定反代发往后端的 `Host` 标头为回环目标，确保 authority 计算恒定；<br>2. 增加防环检查，已携带同名 Token 的请求禁止重复重定向；<br>3. 触发 303 时在响应头中强制清除失效 `dsh-auth-` Cookie | `proxy.go`<br>`fngateway.go` |
+| **7** | 反代端口打开报 **ERR_TOO_MANY_REDIRECTS** | 浏览器存有历史失效的 `dsh-auth-` Cookie，反代无条件拦截 401 触发 303 重定向，形成自身循环重定向 | 1. 显式固定反代发往后端的 `Host` 标头为回环目标，确保 authority 计算恒定；<br>2. 增加防环换票熔断机制（`_dsh_exch`），5秒内仅允许触发一次重定向，彻底掐断死循环；<br>3. 触发 303 时在响应头中强制清除失效 `dsh-auth-` Cookie（兼容 HTTPS 双标头）；<br>4. 规范化上游 `Location` 重定向标头，剥离内部回环地址防止协议与主机漂移 | `proxy.go`<br>`fngateway.go` |
 
 ---
 

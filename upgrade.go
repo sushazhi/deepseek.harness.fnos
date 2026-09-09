@@ -45,7 +45,7 @@ func installPnpm() error {
 	cmd.Dir = pnpmDir
 	cmd.Stdout = NewLogWriterInfo()
 	cmd.Stderr = NewLogWriterWarn()
-	if cfg.NetworkProxy != "" {
+	if cfg.NetworkProxy != "" && strings.Contains(cfg.GetNpmRegistry(), "npmjs.org") {
 		cmd.Env = append(os.Environ(),
 			"HTTP_PROXY="+cfg.NetworkProxy,
 			"HTTPS_PROXY="+cfg.NetworkProxy,
@@ -81,7 +81,7 @@ func fetchRemoteNpmInfo(pkgName string) (*npmPackageInfo, error) {
 	apiURL := fmt.Sprintf("%s/%s", reg, pkgName)
 
 	transport := &http.Transport{Proxy: http.ProxyFromEnvironment}
-	if cfg.NetworkProxy != "" {
+	if cfg.NetworkProxy != "" && strings.Contains(reg, "npmjs.org") {
 		if pURL, err := url.Parse(cfg.NetworkProxy); err == nil {
 			transport.Proxy = http.ProxyURL(pURL)
 		}
@@ -113,7 +113,7 @@ func fetchRemoteNpmInfo(pkgName string) (*npmPackageInfo, error) {
 
 	cmdArgs := []string{"view", pkgName, "time", "--json", "--registry=" + reg}
 	cmd := exec.Command(npmBin(), cmdArgs...)
-	if cfg.NetworkProxy != "" {
+	if cfg.NetworkProxy != "" && strings.Contains(reg, "npmjs.org") {
 		cmd.Env = append(os.Environ(),
 			"HTTP_PROXY="+cfg.NetworkProxy,
 			"HTTPS_PROXY="+cfg.NetworkProxy,
@@ -163,11 +163,12 @@ func formatVersionTag(ver string) string {
 func CheckUpdate() (*CheckUpdateResult, error) {
 	currentVersion := readVersion()
 	tagCurrent := formatVersionTag(currentVersion)
-	LogInfo("开始检查 NPM 远程更新 (当前版本: %s)...", tagCurrent)
+	reg := strings.TrimRight(GetConfig().GetNpmRegistry(), "/")
+	LogInfo("[DSH 核心] 开始检查远程更新 (目标: %s, 当前版本: %s, 源: %s)...", dshPackageName, tagCurrent, reg)
 
 	info, err := fetchRemoteNpmInfo(dshPackageName)
 	if err != nil {
-		LogWarning("检查 NPM 更新失败: %s", err)
+		LogWarning("[DSH 核心] 检查远程更新失败 (目标: %s): %s", dshPackageName, err)
 		return nil, fmt.Errorf("检查更新失败: %w", err)
 	}
 
@@ -191,10 +192,10 @@ func CheckUpdate() (*CheckUpdateResult, error) {
 		} else {
 			msg = fmt.Sprintf("发现新版本 [ %s → %s ]", tagCurrent, tagRemote)
 		}
-		LogInfo("检查远程更新完成: %s", msg)
+		LogInfo("[DSH 核心] 检查远程更新完成: %s", msg)
 	} else {
 		msg = fmt.Sprintf("当前已是最新版本 [ %s ]", tagCurrent)
-		LogInfo("检查远程更新完成: %s", msg)
+		LogInfo("[DSH 核心] 检查远程更新完成: %s", msg)
 	}
 
 	return &CheckUpdateResult{
@@ -240,7 +241,7 @@ func RepairEnvironment(keepPlugins bool) {
 func repairEnvironment(keepPlugins bool) {
 	tarPath := filepath.Join(globalAppDest, "deepseek-harness.tar.gz")
 	if _, err := os.Stat(tarPath); err != nil {
-		LogInfo("未检测到内置离线包，通过 NPM 重新安装官方纯净环境: %s", tarPath)
+		LogInfo("[DSH 核心] 未检测到内置离线包，通过 NPM 重新安装官方纯净环境: %s", tarPath)
 		stopAndWait()
 		if !keepPlugins {
 			ResetAllProfilePatches()
@@ -263,7 +264,7 @@ func repairEnvironment(keepPlugins bool) {
 	}
 
 	state.SetStatus(StatusBuilding, "正在清空工作区并恢复出厂状态...")
-	LogInfo("开始执行恢复出厂设置（清理第三方插件与挂载，保留 API 凭据与配置）")
+	LogInfo("[DSH 核心] 开始执行恢复出厂设置（清理第三方插件与挂载，保留 API 凭据与配置）")
 
 	zipVer := readAppDestVersion()
 	deployBuiltinPackage(tarPath, zipVer, false)
@@ -298,14 +299,14 @@ func installDshFromNpm(targetVersion string) error {
 		args = append(args, "--cache="+globalNpmCache)
 	}
 
-	LogInfo("正在执行 NPM 安装: npm %s", strings.Join(args, " "))
+	LogInfo("[DSH 核心] 正在执行 NPM 安装: npm %s", strings.Join(args, " "))
 	cmd := exec.Command(npmBin(), args...)
 	cmd.Dir = runtimeDir
 	cmd.Stdout = NewLogWriterInfo()
 	cmd.Stderr = NewLogWriterWarn()
 
 	cmdEnv := append([]string{}, os.Environ()...)
-	if cfg.NetworkProxy != "" {
+	if cfg.NetworkProxy != "" && strings.Contains(cfg.GetNpmRegistry(), "npmjs.org") {
 		cmdEnv = append(cmdEnv,
 			"HTTP_PROXY="+cfg.NetworkProxy,
 			"HTTPS_PROXY="+cfg.NetworkProxy,
@@ -325,7 +326,7 @@ func installDshFromNpm(targetVersion string) error {
 		return fmt.Errorf("npm 安装完成但入口文件缺失: %s", cliBinJs)
 	}
 
-	LogInfo("NPM 核心包安装完成: %s", pkgSpec)
+	LogInfo("[DSH 核心] 安装核心包完成: %s", pkgSpec)
 	return nil
 }
 
@@ -336,7 +337,7 @@ func update(forceRebuild bool) {
 		// 重新部署：安装 config.json 中记录的当前版本
 		targetVer := strings.TrimPrefix(strings.TrimSpace(GetConfig().Version), "v")
 		if targetVer == "" || targetVer == "-" {
-			LogWarning("重新部署失败: 配置文件中未记录有效的当前版本")
+			LogWarning("[DSH 核心] 重新部署失败: 配置文件中未记录有效的当前版本")
 			state.SetStatus(StatusStopped, "重新部署失败: 配置文件未记录当前版本")
 			return
 		}
@@ -347,13 +348,13 @@ func update(forceRebuild bool) {
 		_ = safeRemoveAll(filepath.Join(runtimeDir, "node_modules"))
 
 		if err := installDshFromNpm(targetVer); err != nil {
-			LogWarning("NPM 重新部署失败: %s", err)
+			LogWarning("[DSH 核心] 重新部署失败: %s", err)
 			state.SetStatus(StatusStopped, "重新部署失败: "+err.Error())
 			return
 		}
 
 		verAfter := readVersion()
-		LogInfo("NPM 运行时重新部署成功: %s", verAfter)
+		LogInfo("[DSH 核心] 运行时重新部署成功: %s", verAfter)
 		refreshVersion()
 		SetBuildTime(time.Now())
 		state.SetStatus(StatusStopped, "")
@@ -374,7 +375,7 @@ func update(forceRebuild bool) {
 	}
 
 	if targetVer != "" && verBefore != "" && CompareSemver(targetVer, verBefore) <= 0 {
-		LogInfo("当前运行版本 (v%s) 已高于或等于远端目标版本 (v%s)，跳过更新", verBefore, targetVer)
+		LogInfo("[DSH 核心] 当前运行版本 (v%s) 已高于或等于远端目标版本 (v%s)，跳过更新", verBefore, targetVer)
 		state.SetStatus(StatusStopped, "")
 		restartService()
 		return
@@ -386,13 +387,13 @@ func update(forceRebuild bool) {
 	}
 
 	if err := installDshFromNpm(targetVer); err != nil {
-		LogWarning("NPM 安装更新失败: %s", err)
+		LogWarning("[DSH 核心] 安装更新失败: %s", err)
 		state.SetStatus(StatusStopped, "更新安装失败: "+err.Error())
 		return
 	}
 
 	verAfter := readVersion()
-	LogInfo("NPM 运行时更新成功: %s", verAfter)
+	LogInfo("[DSH 核心] 运行时更新成功: %s", verAfter)
 	refreshVersion()
 	SetBuildTime(time.Now())
 	state.SetStatus(StatusStopped, "")
