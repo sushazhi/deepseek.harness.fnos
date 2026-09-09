@@ -33,7 +33,7 @@ var (
 	currentSnapshotMu       sync.RWMutex
 
 	// snapshotArchiveTargets 定义快照打包与还原的目标数据清单
-	snapshotArchiveTargets = []string{"config.json", "src", "home", "dsh-data", "plugins"}
+	snapshotArchiveTargets = []string{"config.json", "dsh-runtime", "home", "dsh-data", "plugins"}
 )
 
 // SnapshotProgress 快照进度事件与状态
@@ -301,7 +301,7 @@ func checkHardwareBaseline(extraDisk uint64) error {
 	return nil
 }
 
-// CheckResourceForBuild 源码构建前资源检查
+// CheckResourceForBuild 部署更新前资源检查
 func CheckResourceForBuild() error {
 	return checkHardwareBaseline(0)
 }
@@ -337,7 +337,6 @@ type SnapshotMeta struct {
 	CreatedAt        int64  `json:"created_at"`
 	SizeBytes        int64  `json:"size_bytes"`
 	AppVersion       string `json:"app_version"`
-	GitCommit        string `json:"git_commit"`
 	HarnessVersion   string `json:"harness_version"`
 	VersionTag       string `json:"version_tag"`
 	PluginCount      int    `json:"plugin_count"`
@@ -417,7 +416,7 @@ func ListSnapshots() (SnapshotSummary, error) {
 func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 	cur := state.Status()
 	if cur == StatusBuilding {
-		return nil, fmt.Errorf("服务正在源码构建中，请稍候再试")
+		return nil, fmt.Errorf("服务正在部署更新中，请稍候再试")
 	}
 	if cur == StatusSnapshotting {
 		return nil, fmt.Errorf("已有快照任务正在执行中，请勿重复操作")
@@ -497,7 +496,10 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 	}
 
 	harnessVer := readVersion()
-	gitCommit := gitHead()
+	versionTag := harnessVer
+	if versionTag != "" && !strings.HasPrefix(strings.ToLower(versionTag), "v") {
+		versionTag = "v" + versionTag
+	}
 
 	level := params.CompressionLevel
 	if level < 1 || level > 9 {
@@ -509,9 +511,8 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 		Name:             strings.TrimSpace(params.Name),
 		CreatedAt:        time.Now().Unix(),
 		AppVersion:       globalAppVer,
-		GitCommit:        gitCommit,
 		HarnessVersion:   harnessVer,
-		VersionTag:       formatVersionTag(harnessVer, gitCommit),
+		VersionTag:       versionTag,
 		PluginCount:      pluginCount,
 		CompressionLevel: level,
 	}
@@ -815,7 +816,7 @@ func verifySnapshotArchive(tarPath string) error {
 func RestoreSnapshot(id string) error {
 	cur := state.Status()
 	if cur == StatusBuilding {
-		return fmt.Errorf("服务正在源码构建中，无法还原快照，请稍候再试")
+		return fmt.Errorf("服务正在部署更新中，无法还原快照，请稍候再试")
 	}
 	if cur == StatusSnapshotting {
 		return fmt.Errorf("已有快照任务正在执行中，请勿重复操作")
@@ -945,6 +946,42 @@ func RestoreSnapshot(id string) error {
 	LogInfo("正在重新初始化应用环境与加载配置...")
 	InitConfig()
 	InitAppEnv()
+	migrateFromGitToNpm()
+
+	// 若还原自旧版快照且尚未就绪 NPM 运行时，自动补齐运行环境
+	if !isRuntimeReady() {
+		LogInfo("快照还原后检测到 NPM 运行时未就绪，正在自动补全运行环境...")
+		setSnapshotProgress(SnapshotProgress{
+			Active:  true,
+			Action:  "restore",
+			Percent: 88,
+			Stage:   "正在自动补全核心运行时",
+			Message: "部署官方运行环境",
+		})
+		tarPath := filepath.Join(globalAppDest, "deepseek-harness.tar.gz")
+		if _, err := os.Stat(tarPath); err == nil {
+			LogInfo("检测到内置离线安装包，优先解压部署运行环境: %s", tarPath)
+			if err := extractTarGz(tarPath, runtimeDir); err != nil {
+				LogWarning("解压内置离线包失败 (%s)，回退至 NPM 在线安装: %s", tarPath, err)
+				if err := installDshFromNpm(""); err != nil {
+					LogWarning("快照还原自愈部署 NPM 失败: %s", err)
+				} else {
+					refreshVersion()
+				}
+			} else {
+				refreshVersion()
+				LogInfo("内置核心运行环境解压就绪")
+			}
+		} else {
+			LogInfo("未检测到内置离线包，通过 NPM 在线安装部署官方核心环境...")
+			if err := installDshFromNpm(""); err != nil {
+				LogWarning("快照还原自愈部署 NPM 失败: %s", err)
+			} else {
+				refreshVersion()
+			}
+		}
+		go installPnpm()
+	}
 
 	setSnapshotProgress(SnapshotProgress{
 		Active:  true,

@@ -9,7 +9,6 @@ export const useSystemStore = defineStore('system', () => {
   const statusData = ref<StatusData>({
     name: 'DeepSeek Harness',
     version: '-',
-    commit: '-',
     status: 'stopped',
     uptime: '-',
     started_at: 0,

@@ -131,15 +131,15 @@ func findPidsOnPort(port int) []int {
 
 // isDshProcess 检查进程是否属于 DSH 服务
 func isDshProcess(pid int) bool {
-	if pid <= 0 || srcDir == "" {
+	if pid <= 0 || runtimeDir == "" {
 		return false
 	}
-	if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil && strings.HasPrefix(cwd, srcDir) {
+	if cwd, err := os.Readlink(fmt.Sprintf("/proc/%d/cwd", pid)); err == nil && strings.HasPrefix(cwd, runtimeDir) {
 		return true
 	}
 	if data, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid)); err == nil {
 		cmdline := string(data)
-		return strings.Contains(cmdline, srcDir) || strings.Contains(cmdline, "deepseek-harness")
+		return strings.Contains(cmdline, runtimeDir) || strings.Contains(cmdline, "deepseek-harness") || strings.Contains(cmdline, "@deepseek-ai/dsh")
 	}
 	return false
 }
@@ -251,10 +251,17 @@ func inspectAndHeal() {
 		procMu.Lock()
 		mp := process
 		var currentPid int
+		var isStopping bool
 		if mp != nil {
 			currentPid = mp.Pid()
+			isStopping = mp.stopRequested
 		}
 		procMu.Unlock()
+
+		// 主动停止过程中看门狗彻底静默退出
+		if isStopping {
+			return
+		}
 
 		// 检查原本被托管的 PID 是否依然存活
 		if currentPid > 0 && isProcessAlive(currentPid) {
@@ -292,7 +299,7 @@ func inspectAndHeal() {
 
 		LogWarning("服务主进程已终止 (PID=%d) 且端口 %d 无响应，执行清理", currentPid, port)
 		procMu.Lock()
-		if process == mp {
+		if process == mp && mp != nil && !mp.stopRequested {
 			process = nil
 			if currentPid > 0 {
 				removePidFileIfMatches(currentPid)

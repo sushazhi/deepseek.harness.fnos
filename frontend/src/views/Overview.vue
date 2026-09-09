@@ -24,24 +24,22 @@
                   class="text-lg sm:text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight leading-tight truncate">
                   {{ statusData.name || 'DeepSeek Harness' }}
                 </span>
-                <!-- 更新构建过程中的目标 Commit 动态小徽章 -->
+                <!-- 更新安装过程中的目标版本动态小徽章 -->
                 <n-tag
-                  v-if="isBuilding && statusData.target_commit && statusData.commit && statusData.commit !== statusData.target_commit"
+                  v-if="isBuilding && targetVersion && statusData.version && statusData.version !== targetVersion"
                   type="info" size="small" round :bordered="false"
                   class="font-mono text-xs bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold px-2 flex items-center gap-1 shadow-sm shrink-0">
                   <template #icon>
                     <n-spin :size="10" class="mr-0.5" />
                   </template>
-                  <span>{{ formatShortCommit(statusData.commit) }}</span>
+                  <span>{{ formatVersion(statusData.version) }}</span>
                   <span class="opacity-60">→</span>
-                  <span>{{ formatShortCommit(statusData.target_commit) }}</span>
+                  <span>{{ formatVersion(targetVersion) }}</span>
                 </n-tag>
               </div>
               <div
                 class="text-xs sm:text-sm text-slate-400 dark:text-slate-500 flex items-center gap-1.5 sm:gap-2 flex-nowrap min-w-0">
                 <span class="shrink-0">版本: {{ formatVersion(statusData.version) }}</span>
-                <span class="text-slate-200 dark:text-slate-700 shrink-0 select-none">|</span>
-                <span class="shrink-0 font-mono">Commit: {{ statusData.commit || '-' }}</span>
               </div>
             </div>
 
@@ -185,16 +183,14 @@
           <div class="flex items-center justify-between text-xs">
             <span class="text-slate-500 dark:text-slate-400">当前版本</span>
             <span class="font-mono font-medium text-slate-700 dark:text-slate-200">
-              {{ formatVersionDisplay(updateInfo?.current_version || statusData.version, updateInfo?.current_commit ||
-                statusData.commit) }}
+              {{ formatVersion(updateInfo?.current_version || statusData.version) }}
             </span>
           </div>
           <div
             class="flex items-center justify-between text-xs pt-2 border-t border-slate-200/60 dark:border-white/[0.06]">
             <span class="text-blue-600 dark:text-blue-400 font-medium">目标版本</span>
             <span class="font-mono font-semibold text-blue-600 dark:text-blue-400">
-              {{ formatVersionDisplay(updateInfo?.remote_version || updateInfo?.current_version || statusData.version,
-                updateInfo?.remote_commit) }}
+              {{ formatVersion(updateInfo?.remote_version || updateInfo?.current_version || statusData.version) }}
             </span>
           </div>
         </div>
@@ -205,20 +201,17 @@
             <n-icon :size="15" class="shrink-0">
               <AlertTriangle />
             </n-icon>
-            <span>环境兼容与版本风险提示</span>
+            <span>环境兼容提示</span>
           </div>
           <div class="text-[11.5px] leading-relaxed text-amber-800 dark:text-amber-300">
-            上游仓库更新可能引入破坏性接口变更或未适配插件，可能导致服务启动异常。
+            新版本可能存在插件或配置变动，建议更新前创建快照以备回滚。
           </div>
           <div
             class="p-2 rounded-lg bg-white/70 dark:bg-black/20 border border-amber-500/20 text-[11px] text-amber-900 dark:text-amber-200 flex items-center justify-between gap-2">
-            <span>建议在确认更新前，先手动创建快照以备随时回滚。</span>
+            <span>更新后若遇异常，可随时还原快照或重置。</span>
             <n-button text type="warning" size="tiny" class="font-medium shrink-0" @click="goToSnapshots">
-              前往创建快照 →
+              前往快照 →
             </n-button>
-          </div>
-          <div class="text-[11px] text-slate-500 dark:text-slate-400 leading-normal">
-            若更新后环境异常，可随时在「快照管理」中还原历史快照，或在「设置」中通过「重置修复」回退内置版本。
           </div>
         </div>
       </div>
@@ -267,6 +260,7 @@ const isTouch = useIsTouchDevice()
 
 const showUpdateModal = ref(false)
 const updateInfo = ref<CheckUpdateResult | null>(null)
+const targetVersion = computed(() => statusData.value.target_version || '')
 
 function goToSnapshots() {
   showUpdateModal.value = false
@@ -295,26 +289,10 @@ onMounted(() => {
   systemStore.fetchInitialStatus()
 })
 
-function formatShortCommit(c?: string): string {
-  if (!c || c === '-') return '-'
-  return c.length > 7 ? c.slice(0, 7) : c
-}
-
 function formatVersion(ver?: string): string {
   if (!ver || ver === '-') return '-'
   const v = ver.replace(/^v/i, '').trim()
   return v ? `v${v}` : '-'
-}
-
-function formatVersionDisplay(ver?: string, commit?: string): string {
-  const v = (ver || '').replace(/^v/i, '').trim()
-  const c = formatShortCommit(commit)
-  if (v && c && c !== '-') {
-    return `v${v} (${c})`
-  }
-  if (v) return `v${v}`
-  if (c && c !== '-') return c
-  return '-'
 }
 
 interface ActionCard {
@@ -368,7 +346,7 @@ const actionCards = computed<ActionCard[]>(() => [
     action: 'check_update',
     icon: Download,
     label: isCheckingUpdate.value ? '检查中…' : '检查更新',
-    desc: '检查远程代码更新，检测到新版本时确认后再同步依赖并构建',
+    desc: '检查 NPM 远程官方版本，检测到新版本时一键下载更新并重启',
     iconBg: 'bg-blue-50 dark:bg-blue-950/30 group-hover:bg-blue-100 dark:group-hover:bg-blue-950/50',
     iconColor: 'text-fnos-blue dark:text-blue-400',
     disabled: isActionLocked.value || isCheckingUpdate.value,
@@ -377,13 +355,13 @@ const actionCards = computed<ActionCard[]>(() => [
   {
     action: 'rebuild',
     icon: Tools,
-    label: '强制重建',
-    desc: '重新拉取全部依赖并完整编译，用于修复异常损坏的环境',
+    label: '环境重建',
+    desc: '清理依赖缓存并从 NPM 重新安装官方纯净运行时',
     iconBg: 'bg-purple-50 dark:bg-purple-950/30 group-hover:bg-purple-100 dark:group-hover:bg-purple-950/50',
     iconColor: 'text-purple-600 dark:text-purple-400',
     disabled: isActionLocked.value && activeAction.value !== 'rebuild',
     loading: activeAction.value === 'rebuild',
-    confirmText: '强制重建将重新拉取依赖并编译，耗时较长，确定继续？'
+    confirmText: '环境重建将清理依赖缓存并重新安装官方 NPM 运行时，确定继续？'
   }
 ])
 

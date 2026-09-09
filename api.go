@@ -121,7 +121,7 @@ func Fail(c *gin.Context, status int, msg string) {
 }
 
 func statusPayload() gin.H {
-	status, uptime, lastMsg, commit, version, buildTime, targetCommit, startedAt := state.Snapshot()
+	status, uptime, lastMsg, version, buildTime, targetVersion, startedAt := state.Snapshot()
 	cfg := GetConfig()
 
 	port := cfg.GetProxyPort()
@@ -143,11 +143,6 @@ func statusPayload() gin.H {
 	var verVal any
 	if version != "" {
 		verVal = version
-	}
-
-	var commitVal any
-	if commit != "" {
-		commitVal = commit
 	}
 
 	var buildTimeVal any
@@ -179,8 +174,7 @@ func statusPayload() gin.H {
 		"app_version":        appVerVal,
 		"app_remote_version": appRemoteVerVal,
 		"app_has_update":     appHasUpdate,
-		"commit":             commitVal,
-		"target_commit":      targetCommit,
+		"target_version":     targetVersion,
 		"status":             status,
 		"uptime":             uptimeVal,
 		"started_at":         startedAt,
@@ -381,9 +375,9 @@ func handleAction(c *gin.Context) {
 	case "restart":
 		msg = "服务正在重启…"
 	case "upgrade":
-		msg = "开始拉取远程更新并构建…"
+		msg = "开始拉取远程更新并部署…"
 	case "rebuild":
-		msg = "开始强制重建源码…"
+		msg = "开始重新安装运行环境…"
 	case "repair", "reset":
 		msg = "开始恢复出厂设置…"
 	}
@@ -404,9 +398,9 @@ func handleCheckUpdate(c *gin.Context) {
 func actionErrStatus(err error) int {
 	msg := err.Error()
 	switch {
-	case strings.Contains(msg, "源码不存在"):
+	case strings.Contains(msg, "运行环境未就绪"), strings.Contains(msg, "未就绪"):
 		return http.StatusNotFound
-	case strings.Contains(msg, "构建中"), strings.Contains(msg, "启动中"), strings.Contains(msg, "运行中"), strings.Contains(msg, "依赖未安装"):
+	case strings.Contains(msg, "构建中"), strings.Contains(msg, "部署中"), strings.Contains(msg, "启动中"), strings.Contains(msg, "运行中"), strings.Contains(msg, "依赖未安装"):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError
@@ -580,7 +574,6 @@ func handleSaveConfig(c *gin.Context) {
 
 	cfg.BuildTime = GetBuildTime()
 	cfg.Version = GetVersion()
-	cfg.Commit = GetCommit()
 	if err := SaveConfig(cfg); err != nil {
 		Fail(c, http.StatusInternalServerError, "保存失败: "+err.Error())
 		return

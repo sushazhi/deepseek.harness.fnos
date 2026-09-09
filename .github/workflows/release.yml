@@ -8,6 +8,11 @@ on:
         required: false
         type: boolean
         default: true
+      target_dsh_version:
+        description: '指定 @deepseek-ai/dsh 版本'
+        required: false
+        type: string
+        default: ''
 
 permissions:
   contents: write
@@ -17,8 +22,8 @@ env:
   BIN_NAME: deepseek.harness
 
 jobs:
-  build-harness-amd64:
-    name: Prebuild Harness (amd64)
+  build-runtime-amd64:
+    name: Prepare NPM Runtime (amd64)
     runs-on: ubuntu-latest
     steps:
       - name: Setup Node.js
@@ -26,175 +31,84 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - name: Install System Dependencies
+      - name: Install and Package DSH Runtime (amd64)
         run: |
-          sudo rm -rf /etc/apt/sources.list.d/* /etc/apt/sources.list /etc/apt/apt-mirrors.txt
-          ARCH=$(dpkg --print-architecture)
-          if [ "$ARCH" = "arm64" ]; then
-            MIRROR_URL="http://ports.ubuntu.com/ubuntu-ports/"
-            SEC_URL="http://ports.ubuntu.com/ubuntu-ports/"
-          else
-            MIRROR_URL="http://archive.ubuntu.com/ubuntu/"
-            SEC_URL="http://security.ubuntu.com/ubuntu/"
-          fi
-          sudo tee /etc/apt/sources.list.d/ubuntu.sources <<EOF
-          Types: deb
-          URIs: $MIRROR_URL
-          Suites: noble noble-updates
-          Components: main universe
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-          Types: deb
-          URIs: $SEC_URL
-          Suites: noble-security
-          Components: main universe
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-          sudo apt-get update -o Acquire::http::Timeout="10" -o Acquire::Retries="2"
-          sudo apt-get install -y --no-install-recommends musl-tools
-
-      - name: Clone Upstream Harness
-        run: |
-          mkdir -p /tmp/upstream
-          git clone --depth=1 https://github.com/deepseek-ai/deepseek-harness.git /tmp/upstream/deepseek-harness
-          cd /tmp/upstream/deepseek-harness
-          UPSTREAM_VER=$(node -p "require('./package.json').version")
-          echo "$UPSTREAM_VER" > /tmp/version.txt
-          echo "Upstream deepseek-harness version: $UPSTREAM_VER"
-          git sparse-checkout set packages apps vendor native patches scripts website
-
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-harness-${{ hashFiles('/tmp/upstream/deepseek-harness/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-harness-
-
-      - name: Prebuild Upstream Harness (amd64)
-        run: |
-          cd /tmp/upstream/deepseek-harness
-          pnpm install --no-frozen-lockfile
-          pnpm run build:official
-          cd native/landlock-run
-          pnpm run build:native
-          cd ../..
+          mkdir -p /tmp/runtime-dist
+          cd /tmp/runtime-dist
           
-          find . -name "*.tsbuildinfo" -delete
-          
-          # 动态闭包剪枝：递归分析依赖图，清理未被引用的 dev 模块与冗余子包
-          node - <<'NODE'
-          const fs = require('fs'), path = require('path')
-          function readP(p) { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null } }
-          const allMembers = new Map()
-          function collect(dir) {
-            if (!fs.existsSync(dir)) return
-            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-              if (!e.isDirectory() || e.name === 'node_modules' || e.name === '.git' ||
-                  e.name === 'fixtures' || e.name === 'tests') continue
-              const sub = path.join(dir, e.name)
-              const pj = path.join(sub, 'package.json')
-              if (fs.existsSync(pj)) {
-                const p = readP(pj)
-                if (p && p.name) allMembers.set(p.name, sub)
-              }
-              collect(sub)
-            }
-          }
-          for (const r of ['packages', 'apps', 'vendor', 'native']) collect(r)
-
-          const used = new Set()
-          function visit(name) {
-            if (used.has(name)) return
-            used.add(name)
-            const dir = allMembers.get(name)
-            if (!dir) return
-            const p = readP(path.join(dir, 'package.json'))
-            if (!p) return
-            for (const k of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
-              if (!p[k]) continue
-              for (const dep in p[k]) if (allMembers.has(dep)) visit(dep)
-            }
-          }
-          visit('@deepseek-ai/dsh')
-
-          let removed = 0
-          for (const [name, dir] of allMembers) {
-            if (used.has(name)) continue
-            if (dir.includes('/fixtures/') || dir.includes('/tests/')) continue
-            if (name.includes('landlock-run-workspace') || dir.startsWith('native/landlock-run/packages/')) continue
-            fs.rmSync(dir, { recursive: true, force: true })
-            removed++
-            console.log('rm unused member:', dir, '[' + name + ']')
-          }
-          console.log('removed ' + removed + ' unused workspace members')
-          NODE
-          
-          # 清理根和保留 member 的 scripts 与 devDependencies
-          node - <<'NODE'
-          const fs = require('fs'), path = require('path')
+          cat << 'EOF' > package.json
           {
-            const p = './package.json'
-            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'))
-            pkg.scripts = {}
-            delete pkg.devDependencies
-            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n')
+            "name": "dsh-fnos-runtime",
+            "version": "1.0.0",
+            "private": true,
+            "description": "DeepSeek Harness runtime for fnOS"
           }
-          function stripMember(dir) {
-            if (!fs.existsSync(dir)) return
-            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-              if (!e.isDirectory() || e.name === 'node_modules' || e.name === '.git') continue
-              const sub = path.join(dir, e.name)
-              const pj = path.join(sub, 'package.json')
-              if (fs.existsSync(pj)) {
-                const pkg = JSON.parse(fs.readFileSync(pj, 'utf8'))
-                let touched = false
-                if (pkg.scripts && Object.keys(pkg.scripts).length) { pkg.scripts = {}; touched = true }
-                if (pkg.devDependencies) { delete pkg.devDependencies; touched = true }
-                if (touched) fs.writeFileSync(pj, JSON.stringify(pkg, null, 2) + '\n')
-              }
-              stripMember(sub)
-            }
-          }
-          for (const root of ['packages', 'apps', 'vendor']) stripMember(root)
-          NODE
-          
-          # 重装纯生产依赖（仅为核心闭包安装依赖）
-          rm -rf node_modules
-          CI=true pnpm install --prod \
-            --no-frozen-lockfile \
-            --config.confirmModulesPurge=false \
-            --config.dangerouslyAllowAllBuilds=true \
-            --config.minimumReleaseAge=0 \
-            --config.strictDepBuilds=false \
-            --config.allow-unused-patches=true
-          
-          node packages/subprocess/subprocess-local/scripts/ensure-spawn-helper.mjs || true
-          
-          cd /tmp/upstream
-          tar --numeric-owner -czf /tmp/deepseek-harness-amd64.tar.gz deepseek-harness
+          EOF
 
-      - name: Upload amd64 Artifact
+          TARGET_VER="${{ github.event.inputs.target_dsh_version }}"
+          if [ -z "$TARGET_VER" ]; then
+            TARGET_VER=$(node -e '
+              const { execSync } = require("child_process");
+              const raw = execSync("npm view @deepseek-ai/dsh versions --json", { encoding: "utf8" });
+              const list = JSON.parse(raw);
+              function parse(v) {
+                const m = v.trim().replace(/^[v^~]/, "").match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
+                if (!m) return null;
+                return { maj: +m[1], min: +m[2], pat: +m[3], pre: m[4] ? m[4].split(".") : [] };
+              }
+              function cmp(a, b) {
+                const p1 = parse(a), p2 = parse(b);
+                if (!p1 || !p2) return a.localeCompare(b);
+                if (p1.maj !== p2.maj) return p1.maj - p2.maj;
+                if (p1.min !== p2.min) return p1.min - p2.min;
+                if (p1.pat !== p2.pat) return p1.pat - p2.pat;
+                if (!p1.pre.length && p2.pre.length) return 1;
+                if (p1.pre.length && !p2.pre.length) return -1;
+                const max = Math.max(p1.pre.length, p2.pre.length);
+                for (let i = 0; i < max; i++) {
+                  if (i >= p1.pre.length) return -1;
+                  if (i >= p2.pre.length) return 1;
+                  const s1 = p1.pre[i], s2 = p2.pre[i];
+                  if (s1 === s2) continue;
+                  const n1 = /^\d+$/.test(s1) ? +s1 : null, n2 = /^\d+$/.test(s2) ? +s2 : null;
+                  if (n1 !== null && n2 !== null) return n1 - n2;
+                  if (n1 !== null && n2 === null) return -1;
+                  if (n1 === null && n2 !== null) return 1;
+                  return s1.localeCompare(s2);
+                }
+                return 0;
+              }
+              list.sort(cmp);
+              console.log(list[list.length - 1]);
+            ')
+          fi
+
+          TARGET_PKG="@deepseek-ai/dsh@$TARGET_VER"
+          echo "正在安装 amd64 官方 NPM 核心运行环境: $TARGET_PKG ..."
+          npm install "$TARGET_PKG" --save --prefer-offline --no-audit --no-fund
+
+          DSH_PKG_JSON="node_modules/@deepseek-ai/dsh/package.json"
+          if [ ! -f "$DSH_PKG_JSON" ]; then
+            echo "Error: 未找到 $DSH_PKG_JSON"
+            exit 1
+          fi
+
+          INSTALLED_DSH_VER=$(node -p "require('./$DSH_PKG_JSON').version")
+          echo "$INSTALLED_DSH_VER" > /tmp/version.txt
+          echo "DSH amd64 NPM Version: $INSTALLED_DSH_VER"
+
+          tar --numeric-owner -czf /tmp/deepseek-harness-amd64.tar.gz package.json package-lock.json node_modules
+
+      - name: Upload amd64 Runtime Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: harness-amd64
+          name: harness-runtime-amd64
           path: |
             /tmp/deepseek-harness-amd64.tar.gz
             /tmp/version.txt
 
-  build-harness-arm64:
-    name: Prebuild Harness (arm64)
+  build-runtime-arm64:
+    name: Prepare NPM Runtime (arm64)
     runs-on: ubuntu-24.04-arm
     steps:
       - name: Setup Node.js
@@ -202,168 +116,85 @@ jobs:
         with:
           node-version: '24'
 
-      - name: Setup pnpm
-        uses: pnpm/action-setup@v4
-        with:
-          version: 11
-
-      - name: Install System Dependencies
+      - name: Install and Package DSH Runtime (arm64)
         run: |
-          sudo rm -rf /etc/apt/sources.list.d/* /etc/apt/sources.list /etc/apt/apt-mirrors.txt
-          ARCH=$(dpkg --print-architecture)
-          if [ "$ARCH" = "arm64" ]; then
-            MIRROR_URL="http://ports.ubuntu.com/ubuntu-ports/"
-            SEC_URL="http://ports.ubuntu.com/ubuntu-ports/"
-          else
-            MIRROR_URL="http://archive.ubuntu.com/ubuntu/"
-            SEC_URL="http://security.ubuntu.com/ubuntu/"
-          fi
-          sudo tee /etc/apt/sources.list.d/ubuntu.sources <<EOF
-          Types: deb
-          URIs: $MIRROR_URL
-          Suites: noble noble-updates
-          Components: main universe
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-          Types: deb
-          URIs: $SEC_URL
-          Suites: noble-security
-          Components: main universe
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-          sudo apt-get update -o Acquire::http::Timeout="10" -o Acquire::Retries="2"
-          sudo apt-get install -y --no-install-recommends musl-tools
-
-      - name: Clone Upstream Harness
-        run: |
-          mkdir -p /tmp/upstream
-          git clone --depth=1 https://github.com/deepseek-ai/deepseek-harness.git /tmp/upstream/deepseek-harness
-          cd /tmp/upstream/deepseek-harness
-          git sparse-checkout set packages apps vendor native patches scripts website
-
-      - name: Get pnpm store directory
-        id: pnpm-cache
-        shell: bash
-        run: |
-          echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_OUTPUT
-
-      - name: Setup pnpm cache
-        uses: actions/cache@v4
-        with:
-          path: ${{ steps.pnpm-cache.outputs.STORE_PATH }}
-          key: ${{ runner.os }}-pnpm-harness-${{ hashFiles('/tmp/upstream/deepseek-harness/pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-pnpm-harness-
-
-      - name: Prebuild Upstream Harness (arm64)
-        run: |
-          cd /tmp/upstream/deepseek-harness
-          pnpm install --no-frozen-lockfile
-          pnpm run build:official
-          cd native/landlock-run
-          pnpm run build:native
-          cd ../..
+          mkdir -p /tmp/runtime-dist
+          cd /tmp/runtime-dist
           
-          find . -name "*.tsbuildinfo" -delete
-          
-          node - <<'NODE'
-          const fs = require('fs'), path = require('path')
-          function readP(p) { try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch { return null } }
-          const allMembers = new Map()
-          function collect(dir) {
-            if (!fs.existsSync(dir)) return
-            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-              if (!e.isDirectory() || e.name === 'node_modules' || e.name === '.git' ||
-                  e.name === 'fixtures' || e.name === 'tests') continue
-              const sub = path.join(dir, e.name)
-              const pj = path.join(sub, 'package.json')
-              if (fs.existsSync(pj)) {
-                const p = readP(pj)
-                if (p && p.name) allMembers.set(p.name, sub)
-              }
-              collect(sub)
-            }
-          }
-          for (const r of ['packages', 'apps', 'vendor', 'native']) collect(r)
-
-          const used = new Set()
-          function visit(name) {
-            if (used.has(name)) return
-            used.add(name)
-            const dir = allMembers.get(name)
-            if (!dir) return
-            const p = readP(path.join(dir, 'package.json'))
-            if (!p) return
-            for (const k of ['dependencies', 'optionalDependencies', 'peerDependencies']) {
-              if (!p[k]) continue
-              for (const dep in p[k]) if (allMembers.has(dep)) visit(dep)
-            }
-          }
-          visit('@deepseek-ai/dsh')
-
-          let removed = 0
-          for (const [name, dir] of allMembers) {
-            if (used.has(name)) continue
-            if (dir.includes('/fixtures/') || dir.includes('/tests/')) continue
-            if (name.includes('landlock-run-workspace') || dir.startsWith('native/landlock-run/packages/')) continue
-            fs.rmSync(dir, { recursive: true, force: true })
-            removed++
-            console.log('rm unused member:', dir, '[' + name + ']')
-          }
-          console.log('removed ' + removed + ' unused workspace members')
-          NODE
-          
-          node - <<'NODE'
-          const fs = require('fs'), path = require('path')
+          cat << 'EOF' > package.json
           {
-            const p = './package.json'
-            const pkg = JSON.parse(fs.readFileSync(p, 'utf8'))
-            pkg.scripts = {}
-            delete pkg.devDependencies
-            fs.writeFileSync(p, JSON.stringify(pkg, null, 2) + '\n')
+            "name": "dsh-fnos-runtime",
+            "version": "1.0.0",
+            "private": true,
+            "description": "DeepSeek Harness runtime for fnOS"
           }
-          function stripMember(dir) {
-            if (!fs.existsSync(dir)) return
-            for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-              if (!e.isDirectory() || e.name === 'node_modules' || e.name === '.git') continue
-              const sub = path.join(dir, e.name)
-              const pj = path.join(sub, 'package.json')
-              if (fs.existsSync(pj)) {
-                const pkg = JSON.parse(fs.readFileSync(pj, 'utf8'))
-                let touched = false
-                if (pkg.scripts && Object.keys(pkg.scripts).length) { pkg.scripts = {}; touched = true }
-                if (pkg.devDependencies) { delete pkg.devDependencies; touched = true }
-                if (touched) fs.writeFileSync(pj, JSON.stringify(pkg, null, 2) + '\n')
-              }
-              stripMember(sub)
-            }
-          }
-          for (const root of ['packages', 'apps', 'vendor']) stripMember(root)
-          NODE
-          
-          rm -rf node_modules
-          CI=true pnpm install --prod \
-            --no-frozen-lockfile \
-            --config.confirmModulesPurge=false \
-            --config.dangerouslyAllowAllBuilds=true \
-            --config.minimumReleaseAge=0 \
-            --config.strictDepBuilds=false \
-            --config.allow-unused-patches=true
-          
-          node packages/subprocess/subprocess-local/scripts/ensure-spawn-helper.mjs || true
-          
-          cd /tmp/upstream
-          tar --numeric-owner -czf /tmp/deepseek-harness-arm64.tar.gz deepseek-harness
+          EOF
 
-      - name: Upload arm64 Artifact
+          TARGET_VER="${{ github.event.inputs.target_dsh_version }}"
+          if [ -z "$TARGET_VER" ]; then
+            TARGET_VER=$(node -e '
+              const { execSync } = require("child_process");
+              const raw = execSync("npm view @deepseek-ai/dsh versions --json", { encoding: "utf8" });
+              const list = JSON.parse(raw);
+              function parse(v) {
+                const m = v.trim().replace(/^[v^~]/, "").match(/^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/);
+                if (!m) return null;
+                return { maj: +m[1], min: +m[2], pat: +m[3], pre: m[4] ? m[4].split(".") : [] };
+              }
+              function cmp(a, b) {
+                const p1 = parse(a), p2 = parse(b);
+                if (!p1 || !p2) return a.localeCompare(b);
+                if (p1.maj !== p2.maj) return p1.maj - p2.maj;
+                if (p1.min !== p2.min) return p1.min - p2.min;
+                if (p1.pat !== p2.pat) return p1.pat - p2.pat;
+                if (!p1.pre.length && p2.pre.length) return 1;
+                if (p1.pre.length && !p2.pre.length) return -1;
+                const max = Math.max(p1.pre.length, p2.pre.length);
+                for (let i = 0; i < max; i++) {
+                  if (i >= p1.pre.length) return -1;
+                  if (i >= p2.pre.length) return 1;
+                  const s1 = p1.pre[i], s2 = p2.pre[i];
+                  if (s1 === s2) continue;
+                  const n1 = /^\d+$/.test(s1) ? +s1 : null, n2 = /^\d+$/.test(s2) ? +s2 : null;
+                  if (n1 !== null && n2 !== null) return n1 - n2;
+                  if (n1 !== null && n2 === null) return -1;
+                  if (n1 === null && n2 !== null) return 1;
+                  return s1.localeCompare(s2);
+                }
+                return 0;
+              }
+              list.sort(cmp);
+              console.log(list[list.length - 1]);
+            ')
+          fi
+
+          TARGET_PKG="@deepseek-ai/dsh@$TARGET_VER"
+          echo "正在安装 arm64 官方 NPM 核心运行环境: $TARGET_PKG ..."
+          npm install "$TARGET_PKG" --save --prefer-offline --no-audit --no-fund
+
+          DSH_PKG_JSON="node_modules/@deepseek-ai/dsh/package.json"
+          if [ ! -f "$DSH_PKG_JSON" ]; then
+            echo "Error: 未找到 $DSH_PKG_JSON"
+            exit 1
+          fi
+
+          INSTALLED_DSH_VER=$(node -p "require('./$DSH_PKG_JSON').version")
+          echo "$INSTALLED_DSH_VER" > /tmp/version.txt
+          echo "DSH arm64 NPM Version: $INSTALLED_DSH_VER"
+
+          tar --numeric-owner -czf /tmp/deepseek-harness-arm64.tar.gz package.json package-lock.json node_modules
+
+      - name: Upload arm64 Runtime Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: harness-arm64
-          path: /tmp/deepseek-harness-arm64.tar.gz
+          name: harness-runtime-arm64
+          path: |
+            /tmp/deepseek-harness-arm64.tar.gz
+            /tmp/version.txt
 
   build-and-release:
-    name: Package and Release
-    needs: [build-harness-amd64, build-harness-arm64]
+    name: Package and Release FPK
+    needs: [build-runtime-amd64, build-runtime-arm64]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -383,16 +214,16 @@ jobs:
         with:
           go-version: '1.23'
 
-      - name: Download amd64 Artifacts
+      - name: Download amd64 Runtime Artifact
         uses: actions/download-artifact@v4
         with:
-          name: harness-amd64
+          name: harness-runtime-amd64
           path: /tmp/amd64-dist
 
-      - name: Download arm64 Artifact
+      - name: Download arm64 Runtime Artifact
         uses: actions/download-artifact@v4
         with:
-          name: harness-arm64
+          name: harness-runtime-arm64
           path: /tmp/arm64-dist
 
       - name: Build Frontend
@@ -401,7 +232,7 @@ jobs:
           npm ci
           npm run build
 
-      - name: Compile Go Binaries
+      - name: Compile Go Binaries (amd64 & arm64)
         run: |
           mkdir -p /tmp/gobins
           GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o /tmp/gobins/${{ env.BIN_NAME }}-amd64 .
@@ -409,7 +240,7 @@ jobs:
 
       - name: Build All FPK Packages (Parallel)
         run: |
-          # 1. x86 预构建版
+          # 1. 打包 x86 离线安装包（匹配 amd64 原生模块）
           (
             mkdir -p fnpack_x86/app/bin
             cp -r fnpack/* fnpack_x86/
@@ -427,12 +258,12 @@ jobs:
           ) &
           PID_X86=$!
 
-          # 2. arm 预构建版
+          # 2. 打包 ARM 离线安装包（匹配 arm64 原生模块）
           (
             mkdir -p fnpack_arm/app/bin
             cp -r fnpack/* fnpack_arm/
             rm -f fnpack_arm/app/bin/skill/bin/trim-cli-linux-x64
-            cp /tmp/amd64-dist/version.txt fnpack_arm/app/.version
+            cp /tmp/arm64-dist/version.txt fnpack_arm/app/.version
             cp /tmp/arm64-dist/deepseek-harness-arm64.tar.gz fnpack_arm/app/deepseek-harness.tar.gz
             cp /tmp/gobins/${{ env.BIN_NAME }}-arm64 fnpack_arm/app/bin/${{ env.BIN_NAME }}
             sed -i 's/platform[[:space:]]*=[[:space:]]*x86/platform              = arm/g' fnpack_arm/manifest
@@ -465,14 +296,14 @@ jobs:
           echo "upstream_ver=$UPSTREAM_VER" >> $GITHUB_OUTPUT
           echo "Release version: $APP_VER, Upstream version: $UPSTREAM_VER"
 
-      - name: Upload x86 FPK
+      - name: Upload x86 FPK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BIN_NAME }}-x86
           path: ./${{ env.BIN_NAME }}-x86.fpk
           if-no-files-found: error
 
-      - name: Upload ARM FPK
+      - name: Upload ARM FPK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.BIN_NAME }}-arm
@@ -483,27 +314,23 @@ jobs:
         run: |
           CURR_TAG="v${{ steps.manifest.outputs.version }}"
           
-          # 确保拉取完整 tags
           git fetch --tags --force 2>/dev/null || true
-          
-          # 查找上一个语义化版本 tag（排除当前 tag）
           PREV_TAG=$(git tag -l "v*" --sort=-v:refname | grep -E '^v[0-9]' | grep -v "^${CURR_TAG}$" | head -n 1)
           
           echo "Current Tag: $CURR_TAG"
           echo "Previous Tag: $PREV_TAG"
           
-          # 写入 Release 基础信息
           {
             echo "### 安装包说明"
             echo ""
             echo "| 文件名 | 架构 | 说明 |"
             echo "| :--- | :---: | :--- |"
-            echo "| \`deepseek.harness-x86.fpk\` | x86_64 | 预构建完整离线包，内置前端产物、后端文件及完整依赖，安装后极速秒级启动。 |"
-            echo "| \`deepseek.harness-arm.fpk\` | ARM64 | 预构建完整离线包，内置前端产物、后端文件及完整依赖，安装后极速秒级启动。 |"
+            echo "| \`deepseek.harness-x86.fpk\` | x86_64 | 完整离线安装包，内置 x86_64 官方 NPM 运行环境与管理前端，开箱即用。 |"
+            echo "| \`deepseek.harness-arm.fpk\` | ARM64 | 完整离线安装包，内置 ARM64 官方 NPM 运行环境与管理前端，开箱即用。 |"
             echo ""
             echo "---"
             echo "- 应用版本：\`${CURR_TAG}\`"
-            echo "- 上游源码版本：\`${{ steps.manifest.outputs.upstream_ver }}\`"
+            echo "- 内置官方 NPM 核心版本：\`v${{ steps.manifest.outputs.upstream_ver }}\`"
             echo ""
             echo "### 更新日志"
             echo ""
@@ -575,17 +402,14 @@ jobs:
             exit 0
           fi
 
-          # 计算安装包字节大小与 sha256
           X86_SIZE=$(stat -c %s "${{ env.BIN_NAME }}-x86.fpk")
           ARM_SIZE=$(stat -c %s "${{ env.BIN_NAME }}-arm.fpk")
           X86_SHA256=$(sha256sum "${{ env.BIN_NAME }}-x86.fpk" | awk '{print $1}')
           ARM_SHA256=$(sha256sum "${{ env.BIN_NAME }}-arm.fpk" | awk '{print $1}')
           
-          # 构造下载链接
           X86_URL="https://github.com/yuexps/deepseek.harness.fnos/releases/download/${TAG_NAME}/${{ env.BIN_NAME }}-x86.fpk"
           ARM_URL="https://github.com/yuexps/deepseek.harness.fnos/releases/download/${TAG_NAME}/${{ env.BIN_NAME }}-arm.fpk"
           
-          # 待同步更新的目标仓库列表
           TARGET_REPOS=("yuexps/FnDepot")
 
           for REPO in "${TARGET_REPOS[@]}"; do
@@ -643,5 +467,3 @@ jobs:
             
             popd > /dev/null
           done
-
-

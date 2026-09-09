@@ -29,7 +29,6 @@ type Config struct {
 	DataLibraryPath    string `json:"data_library_path,omitempty"`
 	EnableBuiltinSkill *bool  `json:"enable_builtin_skill,omitempty"`
 	Version            string `json:"version,omitempty"`
-	Commit             string `json:"commit,omitempty"`
 	BuildTime          string `json:"build_time,omitempty"`
 	LastRunState       string `json:"last_run_state,omitempty"`
 }
@@ -197,12 +196,6 @@ func GetVersion() string {
 	return globalConfig.Version
 }
 
-func GetCommit() string {
-	configMu.RLock()
-	defer configMu.RUnlock()
-	return globalConfig.Commit
-}
-
 func GetLastRunState() string {
 	configMu.RLock()
 	defer configMu.RUnlock()
@@ -231,13 +224,6 @@ func SetBuildTime(t time.Time) {
 func SetVersion(v string) {
 	configMu.Lock()
 	globalConfig.Version = v
-	configMu.Unlock()
-	persistConfig()
-}
-
-func SetCommit(c string) {
-	configMu.Lock()
-	globalConfig.Commit = c
 	configMu.Unlock()
 	persistConfig()
 }

@@ -818,10 +818,10 @@ func serveFnGatewayStatusPage(w http.ResponseWriter, r *http.Request, err error)
 		badgeText = "启动中"
 		isStarting = true
 	case StatusBuilding:
-		title = "服务构建中"
-		desc = "正在同步依赖与编译运行环境"
+		title = "服务部署中"
+		desc = "正在部署与启动核心运行环境"
 		badgeClass = "badge-starting"
-		badgeText = "构建中"
+		badgeText = "部署中"
 		isStarting = true
 	case StatusSnapshotting:
 		title = "快照维护中"

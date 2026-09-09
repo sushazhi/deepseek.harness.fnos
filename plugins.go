@@ -329,7 +329,7 @@ func installedPluginMetadata(name string) (meta rawPackageMeta, found bool) {
 	candidates := []string{
 		filepath.Join(pluginProfileDir(), "node_modules", name, "package.json"),
 		filepath.Join(globalDshHome, "profiles", "node_modules", name, "package.json"),
-		filepath.Join(srcDir, "node_modules", name, "package.json"),
+		filepath.Join(runtimeDir, "node_modules", name, "package.json"),
 	}
 	for _, p := range candidates {
 		data, err := os.ReadFile(p)
@@ -487,7 +487,7 @@ func setPluginRunning() error {
 	if state.Status() == StatusStarting {
 		return fmt.Errorf("服务正在启动中，请稍候再试")
 	}
-	if _, err := os.Stat(filepath.Join(srcDir, "node_modules")); err != nil {
+	if _, err := os.Stat(filepath.Join(runtimeDir, "node_modules")); err != nil {
 		return fmt.Errorf("运行环境未就绪或依赖文件缺失")
 	}
 	if err := installPnpm(); err != nil {
@@ -620,7 +620,7 @@ func runPluginSubprocess(cmdArgs []string, timeout time.Duration) error {
 
 	bin, args := dshCliCmd(cmdArgs...)
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = srcDir
+	cmd.Dir = runtimeDir
 	cmd.Env = pluginEnv()
 	setProcessGroup(cmd)
 	cmd.Stdout = io.MultiWriter(outWriter, tail)
@@ -693,7 +693,7 @@ func runPluginSync(cmdArgs []string, timeout time.Duration) (string, error) {
 
 	bin, args := dshCliCmd(cmdArgs...)
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = srcDir
+	cmd.Dir = runtimeDir
 	cmd.Env = pluginEnv()
 	setProcessGroup(cmd)
 	var buf bytes.Buffer

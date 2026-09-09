@@ -242,7 +242,7 @@
                           <Help />
                         </n-icon>
                       </template>
-                      用于 GitHub 源码克隆与版本检测，留空使用系统直连
+                      用于 NPM 依赖下载与版本检测，留空使用系统直连
                     </n-tooltip>
                   </div>
                 </template>

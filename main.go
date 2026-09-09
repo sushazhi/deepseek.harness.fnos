@@ -27,7 +27,7 @@ var (
 	globalNpmCache     string
 	globalPluginsDir   string
 	globalSnapshotsDir string
-	srcDir             string
+	runtimeDir         string
 )
 
 func main() {
@@ -58,7 +58,7 @@ func main() {
 	globalNpmCache = filepath.Join(globalPkgVar, "npm-cache")
 	globalPluginsDir = filepath.Join(globalPkgVar, "plugins")
 	globalSnapshotsDir = filepath.Join(globalPkgVar, "snapshots")
-	srcDir = filepath.Join(globalPkgVar, "src", "deepseek-harness")
+	runtimeDir = filepath.Join(globalPkgVar, "dsh-runtime")
 
 	InitLogger()
 	LogInfo("DeepSeek Harness 服务初始化启动 (DATA_LIBRARY_PATH=%s, TRIM_APPDEST=%s, TRIM_APPVER=%s, DSH_RUN_USER=%s)", globalPkgVar, globalAppDest, globalAppVer, globalRunUser)

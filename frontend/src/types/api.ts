@@ -29,8 +29,7 @@ export interface StatusData {
   app_version?: string
   app_remote_version?: string
   app_has_update?: boolean
-  commit: string
-  target_commit?: string
+  target_version?: string
   status: ServiceStatus
   uptime: string
   started_at: number
@@ -51,9 +50,6 @@ export interface CheckUpdateResult {
   has_update: boolean
   current_version?: string
   remote_version?: string
-  current_commit: string
-  remote_commit: string
-  remote_short_commit: string
   message: string
 }
 
@@ -159,7 +155,6 @@ export interface SettingsConfig {
   data_library_path?: string
   enable_builtin_skill?: boolean
   version?: string
-  commit?: string
   build_time?: string
 }
 
@@ -182,7 +177,6 @@ export interface SnapshotMeta {
   size_bytes: number
   compression_level?: number
   app_version?: string
-  git_commit?: string
   harness_version?: string
   version_tag?: string
   plugin_count?: number

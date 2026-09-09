@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
@@ -25,12 +24,12 @@ const (
 )
 
 type HarnessState struct {
-	mu           sync.RWMutex
-	status       string
-	targetCommit string
-	startTime    time.Time
-	lastMessage  string
-	stateSubs    map[chan struct{}]struct{}
+	mu            sync.RWMutex
+	status        string
+	targetVersion string
+	startTime     time.Time
+	lastMessage   string
+	stateSubs     map[chan struct{}]struct{}
 }
 
 var state = &HarnessState{status: StatusStopped, stateSubs: make(map[chan struct{}]struct{})}
@@ -44,7 +43,7 @@ func (s *HarnessState) SetStatus(status, msg string) {
 	s.status = status
 	s.lastMessage = msg
 	if status != StatusBuilding {
-		s.targetCommit = ""
+		s.targetVersion = ""
 	}
 	if becameRunning {
 		s.startTime = time.Now()
@@ -62,10 +61,10 @@ func (s *HarnessState) SetStatus(status, msg string) {
 	}
 }
 
-func (s *HarnessState) SetTargetCommit(tc string) {
+func (s *HarnessState) SetTargetVersion(tv string) {
 	s.mu.Lock()
-	if s.targetCommit != tc {
-		s.targetCommit = tc
+	if s.targetVersion != tv {
+		s.targetVersion = tv
 		s.mu.Unlock()
 		s.notify()
 		return
@@ -79,13 +78,12 @@ func (s *HarnessState) Status() string {
 	return s.status
 }
 
-func (s *HarnessState) Snapshot() (status, uptime, lastMsg, commit, version, buildTime, targetCommit string, startedAt int64) {
+func (s *HarnessState) Snapshot() (status, uptime, lastMsg, version, buildTime, targetVersion string, startedAt int64) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	status = s.status
 	lastMsg = s.lastMessage
-	targetCommit = s.targetCommit
-	commit = GetCommit()
+	targetVersion = s.targetVersion
 	version = GetVersion()
 	if status == StatusRunning && !s.startTime.IsZero() {
 		startedAt = s.startTime.Unix()
@@ -126,23 +124,16 @@ func (s *HarnessState) Poke() {
 	s.notify()
 }
 
-// isRuntimeReady 校验工作区产物与依赖是否完备
+// isRuntimeReady 校验 NPM 运行环境与核心入口是否就绪
 func isRuntimeReady() bool {
-	if fi, err := os.Stat(srcDir); err != nil || !fi.IsDir() {
+	if fi, err := os.Stat(runtimeDir); err != nil || !fi.IsDir() {
 		return false
 	}
-	if fi, err := os.Stat(filepath.Join(srcDir, "package.json")); err != nil || fi.IsDir() {
-		return false
+	cliBin := filepath.Join(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
+	if fi, err := os.Stat(cliBin); err == nil && fi.Size() > 0 {
+		return true
 	}
-	cliBin := filepath.Join(srcDir, "apps", "cli", "lib", "bin.js")
-	fi, err := os.Stat(cliBin)
-	if err != nil || fi.Size() == 0 {
-		return false
-	}
-	if fi, err := os.Stat(filepath.Join(srcDir, "node_modules")); err != nil || !fi.IsDir() {
-		return false
-	}
-	return true
+	return false
 }
 
 // EvaluateDeploymentPolicy 判定是否需要部署或升级内置离线包
@@ -156,7 +147,7 @@ func EvaluateDeploymentPolicy(tarPath string) (shouldDeploy bool, isUpgrade bool
 
 	// 运行环境未就绪时执行初始化或自愈部署
 	if !isRuntimeReady() {
-		return true, false, fmt.Sprintf("运行环境未就绪或产物缺失，正在部署预构建包 (v%s)...", zipVer)
+		return true, false, fmt.Sprintf("运行环境未就绪，正在部署内置离线包 (v%s)...", zipVer)
 	}
 
 	// 仅在安装包版本高于本地运行版本时执行升级
@@ -171,77 +162,94 @@ func EvaluateDeploymentPolicy(tarPath string) (shouldDeploy bool, isUpgrade bool
 	return false, false, "本地运行环境已就绪，跳过离线包解压"
 }
 
-// deployPrebuilt 部署内置离线包并拉起服务
-func deployPrebuilt(tarPath, zipVer string, isUpgrade bool) {
-	state.SetStatus(StatusBuilding, "正在准备部署预构建包...")
+// deployBuiltinPackage 部署安装包内置离线包并拉起服务
+func deployBuiltinPackage(tarPath, zipVer string, isUpgrade bool) {
+	state.SetStatus(StatusBuilding, "正在准备部署运行环境...")
 	go func() {
 		installedVer := readVersion()
 		if isUpgrade && installedVer != "" && zipVer != "" {
-			state.SetStatus(StatusBuilding, fmt.Sprintf("正在升级部署预构建包 (v%s → v%s)...", installedVer, zipVer))
-			LogInfo("检测到新版本预构建包 (v%s → v%s)，开始部署: %s", installedVer, zipVer, tarPath)
+			state.SetStatus(StatusBuilding, fmt.Sprintf("正在升级运行环境 (v%s → v%s)...", installedVer, zipVer))
+			LogInfo("检测到新版离线包 (v%s → v%s)，开始部署", installedVer, zipVer)
 		} else {
-			state.SetStatus(StatusBuilding, "正在解压部署内置预构建包...")
-			LogInfo("解压部署预构建包: %s (版本: v%s)", tarPath, zipVer)
+			state.SetStatus(StatusBuilding, "正在部署内置运行环境...")
+			LogInfo("部署内置离线包 (v%s)", zipVer)
 		}
 
-		_ = safeRemoveAll(srcDir)
+		_ = safeRemoveAll(runtimeDir)
 
-		if err := extractTarGz(tarPath, filepath.Dir(srcDir)); err != nil {
-			LogWarning("解压部署预构建包失败: %s", err)
-			state.SetStatus(StatusStopped, "解压离线安装包失败: "+err.Error())
+		if err := extractTarGz(tarPath, runtimeDir); err != nil {
+			LogWarning("解压离线包失败: %s", err)
+			state.SetStatus(StatusStopped, "解压离线包失败: "+err.Error())
 			return
 		}
 
-		if err := installPnpm(); err != nil {
-			LogWarning("初始化 pnpm 运行环境失败: %s", err)
-		}
-
-		refreshCommit()
+		refreshVersion()
 		SetBuildTime(time.Now())
+		go installPnpm()
 		state.SetStatus(StatusStopped, "")
-		LogInfo("预构建包部署就绪，正在启动服务")
+		LogInfo("运行环境部署完成，正在启动服务")
 		if err := Start(); err != nil {
 			LogWarning("服务启动失败: %s", err)
 		}
 	}()
 }
 
+// migrateFromGitToNpm 检测并清理旧版 Git 源码环境
+func migrateFromGitToNpm() {
+	legacySrcDir := filepath.Join(globalPkgVar, "src")
+	if fi, err := os.Stat(legacySrcDir); err == nil && fi.IsDir() {
+		LogInfo("检测到旧版源码目录，正在自动清理: %s", legacySrcDir)
+		if err := safeRemoveAll(legacySrcDir); err != nil {
+			LogWarning("清理旧版源码目录失败: %s", err)
+		} else {
+			LogInfo("旧版源码目录清理完成")
+		}
+	}
+
+	// 清理旧版本可能残留的构建锁文件
+	legacyFiles := []string{
+		filepath.Join(globalPkgVar, "building.lock"),
+		filepath.Join(globalPkgVar, "git.lock"),
+	}
+	for _, f := range legacyFiles {
+		if _, err := os.Stat(f); err == nil {
+			_ = os.Remove(f)
+		}
+	}
+}
+
 func InitHarness() {
 	KillHarness()
 	StartWatchdog()
 	StartUsageSampler()
+	migrateFromGitToNpm()
 
 	tarPath := filepath.Join(globalAppDest, "deepseek-harness.tar.gz")
 	zipVer := readAppDestVersion()
 
-	// 评估预构建包部署决策
+	// 评估内置离线包部署决策
 	if _, err := os.Stat(tarPath); err == nil {
 		shouldDeploy, isUpgrade, reason := EvaluateDeploymentPolicy(tarPath)
 		if shouldDeploy {
 			LogInfo("%s", reason)
-			deployPrebuilt(tarPath, zipVer, isUpgrade)
+			deployBuiltinPackage(tarPath, zipVer, isUpgrade)
 			return
 		}
 		LogInfo("%s", reason)
-	} else if !isSourceValid() {
-		// 未内置压缩包且本地无源码时，通过 Git 克隆源码并编译启动
-		state.SetStatus(StatusBuilding, "未检测到内置预构建包，正在从远程克隆源码...")
-		LogInfo("未检测到内置预构建包 (%s)，开始通过 Git 克隆源码: %s", tarPath, repoURL)
+	} else if !isRuntimeReady() {
+		// 未内置压缩包且本地无运行时，通过 NPM 自动安装部署
+		state.SetStatus(StatusBuilding, "正在通过 NPM 安装运行环境...")
+		LogInfo("未检测到离线包，通过 NPM 安装核心服务: %s", dshPackageName)
 		go func() {
-			_ = safeRemoveAll(srcDir)
-			if err := gitClone(); err != nil {
-				LogWarning("Git 克隆源码失败: %s", err)
-				state.SetStatus(StatusStopped, formatGitError("克隆源码失败", err))
+			_ = safeRemoveAll(runtimeDir)
+			if err := installDshFromNpm(""); err != nil {
+				LogWarning("NPM 安装核心服务失败: %s", err)
+				state.SetStatus(StatusStopped, "安装失败: "+err.Error())
 				return
 			}
-			if err := buildFromSource(false); err != nil {
-				LogWarning("源码构建初始化失败: %s", err)
-				state.SetStatus(StatusStopped, "构建失败: "+err.Error())
-				return
-			}
-			refreshCommit()
+			refreshVersion()
 			state.SetStatus(StatusStopped, "")
-			LogInfo("源码克隆与构建完成，正在启动服务")
+			LogInfo("NPM 运行时部署完成，正在启动服务")
 			if err := Start(); err != nil {
 				LogWarning("服务启动失败: %s", err)
 			}
@@ -250,11 +258,9 @@ func InitHarness() {
 	}
 
 	// 常规启动并按上次状态自启
-	refreshCommit()
+	refreshVersion()
 	ApplyBuiltinSkillConfig()
-	go func() {
-		_ = installPnpm()
-	}()
+	go installPnpm()
 	if GetLastRunState() == StatusRunning {
 		LogInfo("检测到上次运行状态为 running，正在自动拉起服务")
 		go func() {
@@ -290,7 +296,7 @@ func Start() error {
 	return startLocked()
 }
 
-// dshCliCmd 优先直接执行编译后的 CLI 入口，其次解析 package.json，失败时以 pnpm 兜底
+// dshCliCmd 构造 DSH CLI 执行命令与参数
 func dshCliCmd(subArgs ...string) (string, []string) {
 	cfg := GetConfig()
 	var v8Args []string
@@ -298,27 +304,17 @@ func dshCliCmd(subArgs ...string) (string, []string) {
 		v8Args = append(v8Args, fmt.Sprintf("--max-old-space-size=%d", cfg.HeapMemoryLimit*1024))
 	}
 
-	cliBinJs := filepath.Join(srcDir, "apps", "cli", "lib", "bin.js")
+	cliBinJs := filepath.Join(runtimeDir, "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js")
 	if _, err := os.Stat(cliBinJs); err == nil {
 		return nodeBin(), append(append(v8Args, cliBinJs), subArgs...)
 	}
 
-	pkgPath := filepath.Join(srcDir, "package.json")
-	if data, err := os.ReadFile(pkgPath); err == nil {
-		var pkg struct {
-			Scripts map[string]string `json:"scripts"`
-		}
-		if err := json.Unmarshal(data, &pkg); err == nil {
-			if script := strings.TrimSpace(pkg.Scripts["dsh"]); script != "" {
-				parts := strings.Fields(script)
-				if len(parts) > 0 && (parts[0] == "tsx" || parts[0] == "node") {
-					cmdArgs := append([]string{}, parts[1:]...)
-					return nodeBin(), append(append(v8Args, cmdArgs...), subArgs...)
-				}
-			}
-		}
+	binLink := filepath.Join(runtimeDir, "node_modules", ".bin", "dsh")
+	if _, err := os.Stat(binLink); err == nil {
+		return binLink, subArgs
 	}
-	return pnpmBin(), append([]string{"dsh"}, subArgs...)
+
+	return nodeBin(), append(append(v8Args, cliBinJs), subArgs...)
 }
 
 var (
@@ -387,7 +383,7 @@ func startLocked() error {
 
 	bin, args := dshCliCmd("web", "--port", fmt.Sprintf("%d", port), "--no-open")
 	cmd := exec.Command(bin, args...)
-	cmd.Dir = srcDir
+	cmd.Dir = runtimeDir
 	cmd.Stdout = &tokenCaptureWriter{
 		inner: NewLogWriterInfo(),
 		onLine: func(line string) {

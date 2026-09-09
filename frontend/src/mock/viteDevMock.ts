@@ -9,7 +9,7 @@ export function viteDevMock(): Plugin {
     configureServer(server) {
       let status: ServiceStatus = 'running'
       let pid: number | null = 1043416
-      let targetCommit = ''
+      let targetVersion = ''
       let lastMessage = ''
       let startedAt = Math.floor(Date.now() / 1000) - 7200
 
@@ -25,9 +25,8 @@ export function viteDevMock(): Plugin {
         access_password: '',
         enable_builtin_skill: true,
         data_library_path: '/vol1/@appdata/deepseek.harness',
-        version: '0.2.8-4',
-        commit: '7b8f9a2',
-        build_time: '2026-08-31 16:00'
+        version: '0.1.5-alpha.1',
+        build_time: '2026-09-08 23:57'
       }
 
       const workspaces = [
@@ -56,9 +55,8 @@ export function viteDevMock(): Plugin {
           created_at: Math.floor(Date.now() / 1000) - 86400 * 3,
           size_bytes: 1480000000,
           app_version: '0.3.0',
-          git_commit: '7b8f9a2',
-          harness_version: '0.2.8-4',
-          version_tag: 'v0.2.8-4 (7b8f9a2)',
+          harness_version: '0.1.4',
+          version_tag: 'v0.1.4',
           plugin_count: 2
         },
         {
@@ -67,9 +65,8 @@ export function viteDevMock(): Plugin {
           created_at: Math.floor(Date.now() / 1000) - 3600 * 5,
           size_bytes: 1720000000,
           app_version: '0.3.0',
-          git_commit: '7b8f9a2',
-          harness_version: '0.2.8-4',
-          version_tag: 'v0.2.8-4 (7b8f9a2)',
+          harness_version: '0.1.4',
+          version_tag: 'v0.1.4',
           plugin_count: 2
         }
       ]
@@ -157,8 +154,7 @@ export function viteDevMock(): Plugin {
           app_version: '0.2.8-4',
           app_remote_version: '0.2.8-5',
           app_has_update: true,
-          commit: config.commit,
-          target_commit: targetCommit,
+          target_version: targetVersion,
           status,
           uptime: status === 'running' ? formatUptime(Math.floor(Date.now() / 1000) - startedAt) : '-',
           started_at: status === 'running' ? startedAt : 0,
@@ -375,38 +371,34 @@ export function viteDevMock(): Plugin {
 
           if (action === 'upgrade' || action === 'rebuild') {
             status = 'building'
-            targetCommit = '9a3b8c1'
-            lastMessage = action === 'upgrade' ? '正在拉取远程更新并编译...' : '正在强制重新编译项目源码...'
-            appendLog(`[INFO] 开始执行 ${action === 'upgrade' ? '在线版本升级' : '强制源码重建'}`)
+            targetVersion = '0.1.5-alpha.2'
+            lastMessage = action === 'upgrade' ? '正在拉取远程 NPM 更新并部署...' : '正在重新安装 NPM 核心运行环境...'
+            appendLog(`[INFO] 开始执行 ${action === 'upgrade' ? 'NPM 官方包版本升级' : 'NPM 运行环境重新部署'}`)
             broadcast('status', getStatusPayload())
 
             setTimeout(() => {
-              appendLog('[INFO] 正在执行 pnpm install --prefer-offline...')
+              appendLog('[INFO] 正在执行 npm install @deepseek-ai/dsh@0.1.5-alpha.2 --save...')
               setTimeout(() => {
-                appendLog('[INFO] 正在编译前端与 CLI 核心产物 (pnpm run build)...')
-                setTimeout(() => {
-                  appendLog('[INFO] 编译完成，正在重启服务...')
-                  status = 'starting'
-                  lastMessage = '编译完成，正在拉起服务...'
-                  broadcast('status', getStatusPayload())
+                appendLog('[INFO] NPM 核心运行时部署完成，正在重启服务...')
+                status = 'starting'
+                lastMessage = '部署完成，正在拉起服务...'
+                broadcast('status', getStatusPayload())
 
-                  setTimeout(() => {
-                    status = 'running'
-                    pid = Math.floor(Math.random() * 100000) + 1000000
-                    startedAt = Math.floor(Date.now() / 1000)
-                    targetCommit = ''
-                    lastMessage = ''
-                    config.version = '0.2.7'
-                    config.commit = '9a3b8c1'
-                    config.build_time = new Date().toISOString().replace('T', ' ').substring(0, 16)
-                    appendLog('[INFO] [状态变更] building → running: 构建完成并成功拉起')
-                    broadcast('status', getStatusPayload())
-                  }, 1000)
+                setTimeout(() => {
+                  status = 'running'
+                  pid = Math.floor(Math.random() * 100000) + 1000000
+                  startedAt = Math.floor(Date.now() / 1000)
+                  targetVersion = ''
+                  lastMessage = ''
+                  config.version = '0.1.5-alpha.2'
+                  config.build_time = new Date().toISOString().replace('T', ' ').substring(0, 16)
+                  appendLog('[INFO] [状态变更] building → running: 运行环境就绪并成功拉起')
+                  broadcast('status', getStatusPayload())
                 }, 1000)
               }, 1000)
             }, 1000)
 
-            return sendJson(res, 0, '已开始构建升级', getStatusPayload())
+            return sendJson(res, 0, '已开始部署更新', getStatusPayload())
           }
 
           return sendJson(res, 0, '操作成功', getStatusPayload())
@@ -417,12 +409,9 @@ export function viteDevMock(): Plugin {
           await new Promise((r) => setTimeout(r, 600))
           return sendJson(res, 0, 'success', {
             has_update: true,
-            current_version: config.version,
-            remote_version: '0.2.7',
-            current_commit: config.commit,
-            remote_commit: '9a3b8c1d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b',
-            remote_short_commit: '9a3b8c1',
-            message: `发现新版本 [ v${config.version} (${config.commit}) → v0.2.7 (9a3b8c1) ]`
+            current_version: '0.1.2-rc.1',
+            remote_version: '0.1.5-alpha.1',
+            message: '发现新版本 [ v0.1.2-rc.1 → v0.1.5-alpha.1 ]'
           })
         }
 
@@ -670,9 +659,8 @@ export function viteDevMock(): Plugin {
             created_at: Math.floor(Date.now() / 1000),
             size_bytes: 1560000000,
             app_version: '0.3.0',
-            git_commit: config.commit,
             harness_version: config.version,
-            version_tag: `v${config.version} (${config.commit})`,
+            version_tag: `v${config.version}`,
             plugin_count: plugins.length
           }
           mockSnapshots.unshift(newSnap)

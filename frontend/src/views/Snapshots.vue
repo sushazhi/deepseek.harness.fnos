@@ -75,7 +75,7 @@
                     {{ item.name }}
                   </span>
 
-                  <!-- 语义化版本标签 (Semver + 短Commit) -->
+                  <!-- 语义化版本标签 (Semver) -->
                   <n-tag size="tiny" :bordered="false"
                     class="shrink-0 font-mono text-[10px] sm:text-xs bg-slate-100 dark:bg-white/[0.08] text-slate-600 dark:text-slate-300">
                     {{ formatSnapshotVersion(item) }}
@@ -133,7 +133,7 @@
         <!-- 快照说明 -->
         <div
           class="p-2 rounded-xl bg-slate-50 dark:bg-white/[0.03] border border-slate-200/60 dark:border-white/[0.06] text-[11.5px] text-slate-500 dark:text-slate-400">
-          完整备份 DSH 源码、数据、插件与依赖。运行中将短暂重启服务。
+          完整备份 DSH 运行环境、数据、插件与配置。运行中将短暂重启服务。
         </div>
 
         <div class="space-y-1.5">
@@ -211,17 +211,15 @@ const compressionOptions = [
   { label: '极限 (Lv 9)', value: 9 }
 ]
 
-// 格式化语义化版本显示：如 v0.2.8 (7b8f9a2)
+// 格式化语义化版本显示：如 v0.1.5-alpha.1
 function formatSnapshotVersion(item: SnapshotMeta): string {
   if (item.version_tag) {
-    return item.version_tag
+    return item.version_tag.startsWith('v') ? item.version_tag : 'v' + item.version_tag
   }
-  const ver = item.harness_version ? 'v' + item.harness_version.replace(/^v/, '') : ''
-  const commit = item.git_commit ? item.git_commit.substring(0, 7) : ''
-  if (ver && commit) {
-    return `${ver} (${commit})`
+  if (item.harness_version) {
+    return 'v' + item.harness_version.replace(/^v/i, '')
   }
-  return ver || commit || '-'
+  return '-'
 }
 
 function openCreateModal() {

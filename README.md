@@ -40,7 +40,7 @@
 deepseek.harness/
 ├── harness.go          # 服务生命周期管理与状态机
 ├── process.go          # 进程组控制、孤儿清理、端口等待与巡检自愈
-├── build.go            # 源码拉取(Git/Zip)、GCC/Musl环境准备与构建
+├── upgrade.go          # NPM包安装与在线更新
 ├── plugins.go          # 插件解析、安装、启停与安全校验
 ├── profile.go          # 插件运行时补丁与构建策略管理 (cordis.patch.yml / allowBuilds)
 ├── workspace.go        # 工作区数据提取与文件监控
