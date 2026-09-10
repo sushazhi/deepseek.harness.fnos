@@ -291,7 +291,6 @@ func installDshFromNpm(targetVersion string) error {
 		"--prefer-offline",
 		"--no-audit",
 		"--no-fund",
-		"--legacy-peer-deps",
 		"--registry=" + cfg.GetNpmRegistry(),
 	}
 	if globalNpmCache != "" {
