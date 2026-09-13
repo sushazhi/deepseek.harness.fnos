@@ -531,7 +531,7 @@ func waitAndActivateReverseProxy(mp *managedProcess, port int) {
 	ticker := time.NewTicker(200 * time.Millisecond)
 	defer ticker.Stop()
 
-	timeout := time.After(60 * time.Second)
+	timeout := time.After(300 * time.Second)
 
 	for {
 		select {
@@ -539,7 +539,7 @@ func waitAndActivateReverseProxy(mp *managedProcess, port int) {
 			// 进程已退出，终止探测
 			return
 		case <-timeout:
-			LogWarning("Web 服务就绪探测超时 (60s)，目标端口: %d", port)
+			LogWarning("Web 服务就绪探测超时 (300s)，目标端口: %d", port)
 			procMu.Lock()
 			if process == mp {
 				killHarnessLocked()
