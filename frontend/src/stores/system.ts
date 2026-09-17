@@ -206,7 +206,7 @@ export const useSystemStore = defineStore('system', () => {
 
     if (mode === 'port') {
       const port = cfg?.proxy_port || 2299
-      await trimSdk.openURL(`https://${window.location.hostname}:${port}/`, '_blank')
+      await trimSdk.openURL(`http://${window.location.hostname}:${port}/`, '_blank')
       return
     }
 

@@ -5,7 +5,6 @@ go 1.23
 require (
 	github.com/gin-gonic/gin v1.10.0
 	github.com/gorilla/websocket v1.5.3
-	github.com/soheilhy/cmux v0.1.5
 	gopkg.in/yaml.v3 v3.0.1
 )
 

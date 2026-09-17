@@ -3,34 +3,22 @@ package main
 import (
 	"bytes"
 	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
 	"crypto/sha256"
-	"crypto/tls"
-	"crypto/x509"
-	"crypto/x509/pkix"
 	_ "embed"
 	"encoding/hex"
 	"encoding/json"
-	"encoding/pem"
 	"errors"
 	"fmt"
 	"html/template"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"github.com/soheilhy/cmux"
 )
 
 //go:embed templates/auth_login.html
@@ -309,115 +297,14 @@ func serveLoginPage(w http.ResponseWriter, isLocked bool, lockRemaining time.Dur
 var (
 	proxyMu     sync.Mutex
 	proxyHTTP   *http.Server
-	proxyHTTPS  *http.Server
-	proxyCmux   cmux.CMux
 	proxyTarget *url.URL
 	proxyAddr   string
-	proxyTLS    *tls.Config
 )
 
 func updateReverseProxyTarget() {
 	cfg := GetConfig()
 	proxyTarget, _ = url.Parse(fmt.Sprintf("http://127.0.0.1:%d", cfg.GetServerPort()))
 	proxyAddr = fmt.Sprintf("0.0.0.0:%d", cfg.GetProxyPort())
-}
-
-func listAllDNSNames() []string {
-	names := []string{"localhost", "deepseek-harness"}
-	if hostname, err := os.Hostname(); err == nil && hostname != "" && hostname != "localhost" {
-		names = append(names, hostname)
-	}
-	return names
-}
-
-func generateSelfSignedCert(certPath, keyPath string) error {
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	if err != nil {
-		return fmt.Errorf("生成 ECDSA 密钥失败: %s", err)
-	}
-
-	serialNumber, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
-	if err != nil {
-		return fmt.Errorf("生成序列号失败: %s", err)
-	}
-
-	template := x509.Certificate{
-		SerialNumber: serialNumber,
-		Subject: pkix.Name{
-			Organization: []string{"DeepSeek Harness"},
-			CommonName:   "deepseek-harness",
-		},
-		NotBefore:             time.Now().Add(-1 * time.Minute),
-		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
-		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment | x509.KeyUsageCertSign,
-		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		IsCA:                  true,
-		DNSNames:              listAllDNSNames(),
-		IPAddresses:           []net.IP{net.ParseIP("127.0.0.1"), net.ParseIP("::1")},
-	}
-
-	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	if err != nil {
-		return fmt.Errorf("创建证书失败: %s", err)
-	}
-
-	certOut, err := os.Create(certPath)
-	if err != nil {
-		return fmt.Errorf("写入证书文件失败: %s", err)
-	}
-	defer certOut.Close()
-	if err := pem.Encode(certOut, &pem.Block{Type: "CERTIFICATE", Bytes: derBytes}); err != nil {
-		return fmt.Errorf("PEM 编码证书失败: %s", err)
-	}
-
-	keyOut, err := os.Create(keyPath)
-	if err != nil {
-		return fmt.Errorf("写入密钥文件失败: %s", err)
-	}
-	defer keyOut.Close()
-	privBytes, err := x509.MarshalECPrivateKey(priv)
-	if err != nil {
-		return fmt.Errorf("序列化私钥失败: %s", err)
-	}
-	if err := pem.Encode(keyOut, &pem.Block{Type: "EC PRIVATE KEY", Bytes: privBytes}); err != nil {
-		return fmt.Errorf("PEM 编码私钥失败: %s", err)
-	}
-
-	LogInfo("TLS 自签名证书已就绪: %s", certPath)
-	return nil
-}
-
-func loadOrCreateProxyTLS() (*tls.Config, error) {
-	autoDir := globalPkgVar
-	if autoDir == "" {
-		autoDir = "."
-	}
-	certFile := filepath.Join(autoDir, "harness.crt")
-	keyFile := filepath.Join(autoDir, "harness.key")
-
-	needRegen := false
-	if _, err := os.Stat(certFile); os.IsNotExist(err) {
-		needRegen = true
-	} else if _, err := os.Stat(keyFile); os.IsNotExist(err) {
-		needRegen = true
-	}
-
-	if needRegen {
-		if err := generateSelfSignedCert(certFile, keyFile); err != nil {
-			return nil, fmt.Errorf("生成自签名证书失败: %s", err)
-		}
-	}
-
-	cert, err := tls.LoadX509KeyPair(certFile, keyFile)
-	if err != nil {
-		return nil, fmt.Errorf("加载 TLS 证书失败: %s", err)
-	}
-
-	return &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS12,
-	}, nil
 }
 
 func startReverseProxy() error {
@@ -427,18 +314,11 @@ func startReverseProxy() error {
 }
 
 func startReverseProxyLocked() error {
-	if proxyHTTP != nil || proxyHTTPS != nil {
+	if proxyHTTP != nil {
 		return nil
 	}
 
 	updateReverseProxyTarget()
-
-	tlsCfg, err := loadOrCreateProxyTLS()
-	if err != nil {
-		LogWarning("TLS 证书加载失败，反向代理未启动: %s", err)
-		return err
-	}
-	proxyTLS = tlsCfg
 
 	errHandler := func(w http.ResponseWriter, r *http.Request, err error) {
 		// 过滤客户端主动断开连接/取消请求的正常行为
@@ -589,30 +469,13 @@ func startReverseProxyLocked() error {
 		return err
 	}
 
-	// cmux 协议分发
-	mx := cmux.New(ln)
-	tlsL := mx.Match(cmux.TLS())
-	httpL := mx.Match(cmux.Any())
-
-	proxyCmux = mx
-	proxyHTTPS = &http.Server{Handler: proxyWithAuth(proxy), TLSConfig: tlsCfg}
 	proxyHTTP = &http.Server{Handler: proxyWithAuth(proxy)}
 
 	LogInfo("Web 服务就绪探测通过，反向代理启动完成 [%s → %s]", proxyAddr, proxyTarget.String())
 
 	go func() {
-		if err := proxyHTTPS.ServeTLS(tlsL, "", ""); err != nil && !isExpectedCloseErr(err) {
-			LogWarning("HTTPS 代理服务异常退出: %s", err)
-		}
-	}()
-	go func() {
-		if err := proxyHTTP.Serve(httpL); err != nil && !isExpectedCloseErr(err) {
+		if err := proxyHTTP.Serve(ln); err != nil && !isExpectedCloseErr(err) {
 			LogWarning("HTTP 代理服务异常退出: %s", err)
-		}
-	}()
-	go func() {
-		if err := mx.Serve(); err != nil && !isExpectedCloseErr(err) {
-			LogWarning("cmux 协议多路复用器退出: %s", err)
 		}
 	}()
 
@@ -620,7 +483,7 @@ func startReverseProxyLocked() error {
 }
 
 func isExpectedCloseErr(err error) bool {
-	if err == nil || err == http.ErrServerClosed || err == net.ErrClosed || err == cmux.ErrListenerClosed || err == cmux.ErrServerClosed || errors.Is(err, context.Canceled) {
+	if err == nil || err == http.ErrServerClosed || err == net.ErrClosed || errors.Is(err, context.Canceled) {
 		return true
 	}
 	msg := err.Error()
@@ -637,23 +500,13 @@ func stopReverseProxy() {
 }
 
 func stopReverseProxyLocked() {
-	if proxyHTTP == nil && proxyHTTPS == nil {
+	if proxyHTTP == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if proxyHTTPS != nil {
-		_ = proxyHTTPS.Shutdown(ctx)
-		proxyHTTPS = nil
-	}
-	if proxyHTTP != nil {
-		_ = proxyHTTP.Shutdown(ctx)
-		proxyHTTP = nil
-	}
-	if proxyCmux != nil {
-		proxyCmux.Close()
-		proxyCmux = nil
-	}
+	_ = proxyHTTP.Shutdown(ctx)
+	proxyHTTP = nil
 	LogInfo("反向代理服务已停止")
 }
 

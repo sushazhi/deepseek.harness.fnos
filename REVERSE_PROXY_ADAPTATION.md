@@ -9,7 +9,7 @@
 - **零侵入原则**：完全不修改 DSH 官方 NPM 运行时（`@deepseek-ai/dsh`），保持 DSH 核心代码的纯净性，方便后续直接升级。
 - **全场景适配**：
   1. **飞牛网关模式**：子路径代理（`http://<NAS_IP>:5666/app/deepseek-harness/fngateway/`）；
-  2. **独立代理模式**：独立端口（`https://<NAS_IP>:2299/`）；
+  2. **独立代理模式**：独立端口（`http://<NAS_IP>:2299/`）；
   3. **本地回环模式**：本地调试（`http://127.0.0.1:2298/`）。
 - **统一内聚**：所有适配逻辑统一收敛在 Go 反向代理服务层（[`proxy.go`](./proxy.go) 和 [`fngateway.go`](./fngateway.go)）。
 
