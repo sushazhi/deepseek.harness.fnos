@@ -40,7 +40,7 @@ func installPnpm() error {
 	_ = os.MkdirAll(pnpmDir, 0755)
 
 	cfg := GetConfig()
-	args := []string{"install", "pnpm", "--save", "--no-audit", "--no-fund", "--registry=" + cfg.GetNpmRegistry()}
+	args := []string{"install", "pnpm", "--no-audit", "--no-fund", "--registry=" + cfg.GetNpmRegistry()}
 	cmd := exec.Command(npmBin(), args...)
 	cmd.Dir = pnpmDir
 	cmd.Stdout = NewLogWriterInfo()
@@ -287,8 +287,6 @@ func installDshFromNpm(targetVersion string) error {
 	args := []string{
 		"install",
 		pkgSpec,
-		"--save",
-		"--prefer-offline",
 		"--no-audit",
 		"--no-fund",
 		"--registry=" + cfg.GetNpmRegistry(),
