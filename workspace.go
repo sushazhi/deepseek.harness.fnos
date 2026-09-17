@@ -238,7 +238,7 @@ func StartWorkspaceWatch() {
 			case <-timer.C:
 				if err := fetchWorkspaces(); err != nil {
 					if msg := err.Error(); msg != lastErr {
-						LogWarning("工作区数据同步失败: %s", msg)
+						LogWarning("[工作区] 数据同步失败: %s", msg)
 						lastErr = msg
 					}
 					continue
@@ -253,7 +253,7 @@ func StartWorkspaceWatch() {
 				}
 				if err := fetchWorkspaces(); err != nil {
 					if msg := err.Error(); msg != lastErr {
-						LogWarning("工作区数据同步失败: %s", msg)
+						LogWarning("[工作区] 数据同步失败: %s", msg)
 						lastErr = msg
 					}
 					continue

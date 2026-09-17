@@ -324,7 +324,7 @@ func startReverseProxyLocked() error {
 		if errors.Is(err, context.Canceled) || errors.Is(r.Context().Err(), context.Canceled) || strings.Contains(err.Error(), "context canceled") {
 			return
 		}
-		LogWarning("反向代理转发错误 [%s]: %s", proxyAddr, err)
+		LogWarning("[代理] 请求转发失败 [%s]: %s", proxyAddr, err)
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		w.WriteHeader(http.StatusBadGateway)
 		_ = json.NewEncoder(w).Encode(map[string]string{
@@ -425,17 +425,17 @@ func startReverseProxyLocked() error {
 	// 建立 TCP 监听器
 	ln, err := net.Listen("tcp", proxyAddr)
 	if err != nil {
-		LogWarning("反向代理端口监听失败 [%s]: %s", proxyAddr, err)
+		LogWarning("[代理] 端口监听失败 [%s]: %s", proxyAddr, err)
 		return err
 	}
 
 	proxyHTTP = &http.Server{Handler: proxyWithAuth(proxy)}
 
-	LogInfo("[反向代理] 已启动监听 [%s → %s]", proxyAddr, proxyTarget.String())
+	LogInfo("[代理] 已启动监听 [%s → %s]", proxyAddr, proxyTarget.String())
 
 	go func() {
 		if err := proxyHTTP.Serve(ln); err != nil && !isExpectedCloseErr(err) {
-			LogWarning("HTTP 代理服务异常退出: %s", err)
+			LogWarning("[代理] HTTP 代理服务异常退出: %s", err)
 		}
 	}()
 
@@ -467,7 +467,7 @@ func stopReverseProxyLocked() {
 	defer cancel()
 	_ = proxyHTTP.Shutdown(ctx)
 	proxyHTTP = nil
-	LogInfo("[反向代理] 监听已停止")
+	LogInfo("[代理] 监听已停止")
 }
 
 // proxyErrMessage 根据当前服务状态给出准确的代理错误提示
@@ -496,9 +496,9 @@ func restartReverseProxy() {
 	if state.Status() != StatusRunning {
 		return
 	}
-	LogInfo("反向代理配置已变更，执行热重载")
+	LogInfo("[代理] 配置变更，执行热重载")
 	if err := startReverseProxyLocked(); err != nil {
-		LogWarning("反向代理热重载失败: %s", err)
+		LogWarning("[代理] 热重载失败: %s", err)
 	}
 }
 

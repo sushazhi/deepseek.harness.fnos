@@ -400,7 +400,7 @@ func handleListPlugins(c *gin.Context) {
 				for _, eid := range entryIDs {
 					disabledMap[eid] = true
 				}
-				LogInfo("[历史配置迁移] 检测到旧版 package.json 中的 disabled 状态，已自动无缝迁移至官方 cordis.patch.yml: %s", disName)
+				LogInfo("[插件] 检测到旧版 package.json 中 disabled 配置，已迁移至 cordis.patch.yml: %s", disName)
 			}
 		}
 	}
@@ -598,7 +598,7 @@ func cancelActivePlugin() bool {
 	}
 	activePluginCanceled = true
 	pid := activePluginCmd.Process.Pid
-	LogWarning("[插件管理] 收到取消请求，正在终止插件操作进程组 (PID: %d)...", pid)
+	LogWarning("[插件] 收到取消请求，正在终止插件操作进程组 (PID: %d)...", pid)
 	go killProcessTree(pid)
 	return true
 }
@@ -662,7 +662,7 @@ func runPluginSubprocess(cmdArgs []string, timeout time.Duration) error {
 		activePluginCmdMu.Unlock()
 		if cmd.Process != nil {
 			pid := cmd.Process.Pid
-			LogWarning("[插件管理] 操作执行超时 (%v)，正在强制终止进程组 (PID: %d)...", timeout, pid)
+			LogWarning("[插件] 操作执行超时 (%v)，正在强制终止进程组 (PID: %d)...", timeout, pid)
 			killProcessTree(pid)
 		}
 		_ = <-done
@@ -736,7 +736,7 @@ func runPluginSync(cmdArgs []string, timeout time.Duration) (string, error) {
 		activePluginCmdMu.Unlock()
 		if cmd.Process != nil {
 			pid := cmd.Process.Pid
-			LogWarning("[插件管理] 同步操作执行超时 (%v)，正在强制终止进程组 (PID: %d)...", timeout, pid)
+			LogWarning("[插件] 同步操作执行超时 (%v)，正在强制终止进程组 (PID: %d)...", timeout, pid)
 			killProcessTree(pid)
 		}
 		_ = <-done
@@ -809,7 +809,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 
 	// 依赖结构差异自愈
 	if failure.Code == PnpmFailureHoistPatternDiff {
-		LogWarning("[自动自愈] 依赖结构存在跨版本差异，正在执行重建 (pnpm install --no-frozen-lockfile)...")
+		LogWarning("[插件][自愈] 依赖结构存在差异，执行重建环境")
 		_ = runPluginSubprocess([]string{"plugin", "--profile", cmd.Profile, "install", "--no-frozen-lockfile"}, timeout)
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg + "（已自动重建依赖环境）", nil
@@ -820,7 +820,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 	// 存储位置异常自愈
 	if failure.Code == PnpmFailureUnexpectedStore {
 		_ = os.RemoveAll(filepath.Join(pluginProfileDir(), "node_modules"))
-		LogWarning("[自动自愈] 存储位置变更，已自动清理本地缓存并重试: %s", cmd.display())
+		LogWarning("[插件][自愈] 存储位置变更，清理本地缓存并重试: %s", cmd.display())
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg, nil
 		}
@@ -830,7 +830,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 
 	// 大包下载超时自愈
 	if failure.Code == PnpmFailureFetchTimeout {
-		LogWarning("[自动自愈] 大包下载超时，正在以 10 分钟超时延长重试...")
+		LogWarning("[插件][自愈] 依赖包下载超时，延长超时至 10 分钟并重试")
 		retryArgs := append([]string{}, args...)
 		retryArgs = append(retryArgs, "--config.fetchTimeout=600000")
 		if runErr = runPluginSubprocess(retryArgs, timeout+10*time.Minute); runErr == nil {
@@ -841,7 +841,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 
 	// 网络波动重试自愈
 	if failure.Code == PnpmFailureTransientNetwork {
-		LogWarning("[自动自愈] 检测到网络瞬时波动，正在自动重试 1 次...")
+		LogWarning("[插件][自愈] 检测到网络连接异常，执行自动重试")
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg, nil
 		}
@@ -852,7 +852,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 	pkgs := parseBlockedPackages(runErr.Error())
 	if len(pkgs) > 0 {
 		if err := ensureAllowBuildsFor(cmd.Profile, pluginAllowKey(cmd), pkgs); err == nil {
-			LogWarning("[自动自愈] 构建脚本被拦截 [%s]，已自动配置放行并重新执行", strings.Join(pkgs, ", "))
+			LogWarning("[插件][自愈] 构建脚本被拦截 [%s]，已放行并重新执行", strings.Join(pkgs, ", "))
 			if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 				return doneMsg + "（已自动放行构建脚本: " + strings.Join(pkgs, ", ") + "）", nil
 			}
@@ -864,7 +864,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 }
 
 func launchPluginOp(cmd *pluginCommand, doneMsg string) {
-	LogInfo("开始执行插件管理操作: verb=%s, specs=%v, profile=%s", cmd.Verb, cmd.Specs, cmd.Profile)
+	LogInfo("[插件] 开始执行操作: verb=%s, specs=%v, profile=%s", cmd.Verb, cmd.Specs, cmd.Profile)
 	go func() {
 		// 更新前记录旧版本号（用于后续陈旧性比对）
 		beforeVersions := make(map[string]string)
@@ -879,7 +879,7 @@ func launchPluginOp(cmd *pluginCommand, doneMsg string) {
 
 		msg, runErr := runPluginOpWithRecovery(cmd, doneMsg)
 		if runErr != nil {
-			LogWarning("插件执行失败: %s", runErr)
+			LogWarning("[插件] 插件操作执行失败: %s", runErr)
 			setPluginDone(false, runErr.Error())
 			return
 		}
@@ -921,7 +921,7 @@ func launchPluginOp(cmd *pluginCommand, doneMsg string) {
 			}
 		}
 
-		LogInfo("插件执行完成: %s", msg)
+		LogInfo("[插件] 插件操作执行完成: %s", msg)
 		setPluginDone(true, msg)
 	}()
 }
@@ -1004,7 +1004,7 @@ func handlePluginRun(c *gin.Context) {
 		Fail(c, http.StatusConflict, err.Error())
 		return
 	}
-	LogInfo("执行插件指令: %s", cmd.display())
+	LogInfo("[插件] 执行插件指令: %s", cmd.display())
 
 	doneMsg := "操作完成"
 	var startMsg string
@@ -1051,7 +1051,7 @@ func handlePluginToggle(c *gin.Context) {
 	// 官方机制：通过在 cordis.patch.yml 中设置 disabled: true/false
 	disabled := !req.Enabled
 	if err := SetPluginDisabled("web", req.Name, disabled); err != nil {
-		LogWarning("切换插件状态失败 [%s]: %s", req.Name, err)
+		LogWarning("[插件] 切换插件状态失败 [%s]: %s", req.Name, err)
 		Fail(c, http.StatusInternalServerError, "切换插件状态失败: "+err.Error())
 		return
 	}

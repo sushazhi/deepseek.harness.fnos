@@ -186,7 +186,7 @@ func killHarnessLocked() {
 	if process != nil {
 		pid := process.Pid()
 		if pid > 0 {
-			LogInfo("清理运行进程 (PID=%d)", pid)
+			LogInfo("[服务] 清理运行中进程 (PID=%d)", pid)
 			killProcessTree(pid)
 			_ = killProcessGroup(pid)
 			removePidFileIfMatches(pid)
@@ -197,7 +197,7 @@ func killHarnessLocked() {
 	// 清理 PID 文件记录的进程组
 	if data, err := os.ReadFile(pidFilePath()); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
-			LogInfo("清理残留进程组 (PGID=%d)", pid)
+			LogInfo("[服务] 清理残留进程组 (PGID=%d)", pid)
 			_ = killProcessGroup(pid)
 			killProcessTree(pid)
 			removePidFileIfMatches(pid)
@@ -209,11 +209,11 @@ func killHarnessLocked() {
 	for _, pid := range findPidsOnPort(port) {
 		if isProcessAlive(pid) {
 			if isDshProcess(pid) {
-				LogInfo("终止端口 %d 残留进程 (PID=%d)", port, pid)
+				LogInfo("[服务] 终止端口 %d 残留进程 (PID=%d)", port, pid)
 				killProcessTree(pid)
 				_ = killProcessGroup(pid)
 			} else {
-				LogWarning("检测到端口 %d 被非 DSH 进程占用 (PID=%d)，请检查！", port, pid)
+				LogWarning("[服务] 端口 %d 被非托管外部进程占用 (PID=%d)，跳过清理", port, pid)
 			}
 		}
 	}
@@ -277,7 +277,7 @@ func inspectAndHeal() {
 				mp.failCount = 0
 			}
 			if adopted != currentPid {
-				LogInfo("接管端口 %d 活跃子进程 (PID=%d)", port, adopted)
+				LogInfo("[服务] 接管端口 %d 活跃子进程 (PID=%d)", port, adopted)
 				procMu.Lock()
 				if process == mp && mp != nil {
 					mp.adoptedPid = adopted
@@ -297,7 +297,7 @@ func inspectAndHeal() {
 			}
 		}
 
-		LogWarning("服务主进程已终止 (PID=%d) 且端口 %d 无响应，执行清理", currentPid, port)
+		LogWarning("[服务] 主进程已终止 (PID=%d) 且端口 %d 无响应，执行清理", currentPid, port)
 		procMu.Lock()
 		if process == mp && mp != nil && !mp.stopRequested {
 			process = nil

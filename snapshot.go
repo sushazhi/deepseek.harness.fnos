@@ -473,8 +473,8 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 	// 记录服务运行状态
 	wasRunning := (state.Status() == StatusRunning)
 	if wasRunning {
-		LogInfo("停止运行中的服务主进程，刷新持久化数据落盘...")
-		state.SetStatus(StatusSnapshotting, "停止服务准备创建快照...")
+		LogInfo("[快照] 停止运行中服务主进程，刷新持久化数据落盘")
+		state.SetStatus(StatusSnapshotting, "准备创建系统快照...")
 		KillHarness()
 		time.Sleep(1 * time.Second)
 	}
@@ -518,7 +518,7 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 		CompressionLevel: level,
 	}
 
-	LogInfo("开始全量打包快照 [%s]: 名称=\"%s\", 压缩级别=Lv%d, 插件数=%d", id, meta.Name, level, pluginCount)
+	LogInfo("[快照] 开始打包快照 [%s]: 名称=\"%s\", 压缩级别=Lv%d, 插件数=%d", id, meta.Name, level, pluginCount)
 	snapStart := time.Now()
 	if err := archiveSnapshotData(tarPath, level); err != nil {
 		_ = os.RemoveAll(snapDir)
@@ -543,14 +543,13 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 	}
 	metaBytes, _ := json.MarshalIndent(meta, "", "  ")
 	_ = os.WriteFile(filepath.Join(snapDir, "meta.json"), metaBytes, 0644)
-	LogInfo("生成快照元数据描述文件 (meta.json)")
 
 	// 打包完成后，若之前为运行中则自动拉起恢复服务
 	if wasRunning {
-		LogInfo("快照打包归档完成 (耗时: %s)，正在自动拉起恢复服务...", time.Since(snapStart).Round(time.Millisecond))
+		LogInfo("[快照] 打包归档完成 (耗时=%s)，拉起恢复服务", time.Since(snapStart).Round(time.Millisecond))
 		state.SetStatus(StatusStopped, "")
 		if err := Start(); err != nil {
-			LogWarning("快照创建后服务自启失败: %s", err)
+			LogWarning("[快照] 创建后服务自启失败: %s", err)
 		}
 	}
 
@@ -562,7 +561,7 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 		Message: fmt.Sprintf("快照已就绪 (%s)", formatBytes(uint64(meta.SizeBytes))),
 	})
 
-	LogInfo("快照 [%s] 创建成功 (归档文件大小: %s, 总耗时: %s)", id, formatBytes(uint64(meta.SizeBytes)), time.Since(snapStart).Round(time.Millisecond))
+	LogInfo("[快照] 快照 [%s] 创建成功 (归档大小=%s, 总耗时=%s)", id, formatBytes(uint64(meta.SizeBytes)), time.Since(snapStart).Round(time.Millisecond))
 	notifySnapshot()
 	return &meta, nil
 }
@@ -605,7 +604,7 @@ func archiveSnapshotData(tarPath string, level int) error {
 		Message: "扫描源文件元信息",
 	})
 
-	LogInfo("正在扫描待归档数据源: [%s]", strings.Join(targets, ", "))
+	LogInfo("[快照] 扫描待归档数据源: [%s]", strings.Join(targets, ", "))
 	scanStart := time.Now()
 	var totalBytes int64
 	var fileCount int
@@ -622,7 +621,7 @@ func archiveSnapshotData(tarPath string, level int) error {
 	if totalBytes <= 0 {
 		totalBytes = 1
 	}
-	LogInfo("数据源预检完毕: 共计 %d 个文件，原始体积 %s (耗时: %s)", fileCount, formatBytes(uint64(totalBytes)), time.Since(scanStart).Round(time.Millisecond))
+	LogInfo("[快照] 数据源预检完成: 文件数=%d, 原始大小=%s (耗时=%s)", fileCount, formatBytes(uint64(totalBytes)), time.Since(scanStart).Round(time.Millisecond))
 
 	f, err := os.Create(tarPath)
 	if err != nil {
@@ -672,7 +671,7 @@ func archiveSnapshotData(tarPath string, level int) error {
 		// 关键进度里程碑输出日志
 		if pct >= lastMilestonePct+25 && pct < 90 {
 			lastMilestonePct = (pct / 25) * 25
-			LogInfo("快照打包压缩中: 进度 %d%% (已读取 %s / %s，已写入压缩包 %s)", pct, formatBytes(uint64(processedBytes)), formatBytes(uint64(totalBytes)), formatBytes(uint64(compressedBytes)))
+			LogInfo("[快照] 归档压缩进度 %d%% (读取 %s/%s, 写入 %s)", pct, formatBytes(uint64(processedBytes)), formatBytes(uint64(totalBytes)), formatBytes(uint64(compressedBytes)))
 		}
 	}
 
@@ -688,8 +687,6 @@ func archiveSnapshotData(tarPath string, level int) error {
 			}
 			return err
 		}
-
-		LogInfo("正在压缩归档模块 [%s]...", rel)
 
 		if !fi.IsDir() {
 			if err := addFileToTar(tw, pw, globalPkgVar, rel, fi); err != nil {
@@ -722,7 +719,7 @@ func archiveSnapshotData(tarPath string, level int) error {
 	if totalBytes > 0 {
 		ratio = float64(compressedBytes) * 100 / float64(totalBytes)
 	}
-	LogInfo("快照数据流压缩落盘完成: 原始 %s → 压缩后 %s (体积缩减至 %.1f%%，压缩耗时: %s)",
+	LogInfo("[快照] 数据压缩落盘完成: 原始大小=%s, 压缩大小=%s (压缩比=%.1f%%, 耗时=%s)",
 		formatBytes(uint64(totalBytes)),
 		formatBytes(uint64(compressedBytes)),
 		ratio,
@@ -848,7 +845,7 @@ func RestoreSnapshot(id string) error {
 		return fmt.Errorf("快照压缩包缺失: %w", err)
 	}
 
-	LogInfo("开始执行快照还原 [%s]: 名称=\"%s\", 版本=%s, 压缩包大小=%s", id, meta.Name, meta.VersionTag, formatBytes(uint64(meta.SizeBytes)))
+	LogInfo("[快照] 开始执行快照还原 [%s]: 名称=\"%s\", 版本=%s, 归档大小=%s", id, meta.Name, meta.VersionTag, formatBytes(uint64(meta.SizeBytes)))
 
 	setSnapshotProgress(SnapshotProgress{
 		Active:  true,
@@ -866,20 +863,20 @@ func RestoreSnapshot(id string) error {
 		return err
 	}
 
-	LogInfo("正在校验快照压缩包数据完整性...")
+	LogInfo("[快照] 开始校验归档包数据完整性")
 	verifyStart := time.Now()
 	if err := verifySnapshotArchive(tarPath); err != nil {
-		LogError("快照压缩包校验失败: %s", err)
+		LogError("[快照] 归档包数据校验失败: %s", err)
 		return fmt.Errorf("快照校验失败，取消还原: %w", err)
 	}
-	LogInfo("快照包校验通过 (校验耗时: %s)", time.Since(verifyStart).Round(time.Millisecond))
+	LogInfo("[快照] 归档包校验通过 (耗时=%s)", time.Since(verifyStart).Round(time.Millisecond))
 
 	snapshotMu.Lock()
 	defer snapshotMu.Unlock()
 
 	restoreStart := time.Now()
-	state.SetStatus(StatusSnapshotting, "停止服务准备还原快照...")
-	LogInfo("停止当前服务主进程...")
+	state.SetStatus(StatusSnapshotting, "准备还原系统快照...")
+	LogInfo("[快照] 停止当前运行中服务")
 	KillHarness()
 	time.Sleep(1 * time.Second)
 
@@ -897,7 +894,7 @@ func RestoreSnapshot(id string) error {
 		Message: "准备解压运行环境",
 	})
 
-	LogInfo("转移当前工作区数据至临时隔离目录 [%s]...", filepath.Base(trashDir))
+	LogInfo("[快照] 备份当前工作区数据至临时隔离目录 [%s]", filepath.Base(trashDir))
 	for _, d := range targetDirs {
 		src := filepath.Join(globalPkgVar, d)
 		dst := filepath.Join(trashDir, d)
@@ -905,11 +902,11 @@ func RestoreSnapshot(id string) error {
 			if err := os.Rename(src, dst); err == nil {
 				movedDirs = append(movedDirs, d)
 			} else {
-				LogWarning("重命名隔离目录 [%s] 失败: %s", src, err)
+				LogWarning("[快照] 隔离目录 [%s] 失败: %s", src, err)
 			}
 		}
 	}
-	LogInfo("现有工作区数据隔离完毕 (共 %d 个模块: [%s])", len(movedDirs), strings.Join(movedDirs, ", "))
+	LogInfo("[快照] 工作区数据隔离完成 (模块数=%d: [%s])", len(movedDirs), strings.Join(movedDirs, ", "))
 
 	setSnapshotProgress(SnapshotProgress{
 		Active:  true,
@@ -919,11 +916,11 @@ func RestoreSnapshot(id string) error {
 		Message: fmt.Sprintf("数据大小 %s", formatBytes(uint64(meta.SizeBytes))),
 	})
 
-	LogInfo("开始解压快照归档包至运行环境...")
+	LogInfo("[快照] 开始解压归档包至工作区")
 	extractStart := time.Now()
 	extractErr := extractTarGz(tarPath, globalPkgVar)
 	if extractErr != nil {
-		LogError("快照解压失败，执行数据回滚: %s", extractErr)
+		LogError("[快照] 解压归档包失败，执行数据回滚: %s", extractErr)
 		for _, d := range movedDirs {
 			target := filepath.Join(globalPkgVar, d)
 			_ = safeRemoveAll(target)
@@ -933,7 +930,7 @@ func RestoreSnapshot(id string) error {
 		_ = Start()
 		return fmt.Errorf("快照解压失败，已回滚历史数据: %w", extractErr)
 	}
-	LogInfo("快照数据包解压完成 (解压耗时: %s)", time.Since(extractStart).Round(time.Millisecond))
+	LogInfo("[快照] 归档包解压完成 (耗时=%s)", time.Since(extractStart).Round(time.Millisecond))
 
 	setSnapshotProgress(SnapshotProgress{
 		Active:  true,
@@ -943,19 +940,18 @@ func RestoreSnapshot(id string) error {
 		Message: "载入环境参数",
 	})
 
-	LogInfo("正在清理旧数据临时隔离归档...")
 	go func(trash string) {
 		_ = safeRemoveAll(trash)
 	}(trashDir)
 
-	LogInfo("正在重新初始化应用环境与加载配置...")
+	LogInfo("[快照] 重新加载应用配置与环境")
 	InitConfig()
 	InitAppEnv()
 	migrateFromGitToNpm()
 
 	// 若还原自旧版快照且尚未就绪 NPM 运行时，自动补齐运行环境
 	if !isRuntimeReady() {
-		LogInfo("快照还原后检测到 NPM 运行时未就绪，正在自动补全运行环境...")
+		LogInfo("[快照] 检测到核心运行环境未就绪，执行自愈部署")
 		setSnapshotProgress(SnapshotProgress{
 			Active:  true,
 			Action:  "restore",
@@ -965,22 +961,22 @@ func RestoreSnapshot(id string) error {
 		})
 		tarPath := filepath.Join(globalAppDest, "deepseek-harness.tar.gz")
 		if _, err := os.Stat(tarPath); err == nil {
-			LogInfo("检测到内置离线安装包，优先解压部署运行环境: %s", tarPath)
+			LogInfo("[快照] 检测到内置离线安装包，优先解压部署: %s", tarPath)
 			if err := extractTarGz(tarPath, runtimeDir); err != nil {
-				LogWarning("解压内置离线包失败 (%s)，回退至 NPM 在线安装: %s", tarPath, err)
+				LogWarning("[快照] 解压内置离线安装包失败，回退至网络安装: %s", err)
 				if err := installDshFromNpm(""); err != nil {
-					LogWarning("快照还原自愈部署 NPM 失败: %s", err)
+					LogWarning("[快照] 运行环境自愈部署失败: %s", err)
 				} else {
 					refreshVersion()
 				}
 			} else {
 				refreshVersion()
-				LogInfo("内置核心运行环境解压就绪")
+				LogInfo("[快照] 内置运行环境解压就绪")
 			}
 		} else {
-			LogInfo("未检测到内置离线包，通过 NPM 在线安装部署官方核心环境...")
+			LogInfo("[快照] 未检测到内置安装包，执行在线安装部署核心环境")
 			if err := installDshFromNpm(""); err != nil {
-				LogWarning("快照还原自愈部署 NPM 失败: %s", err)
+				LogWarning("[快照] 核心环境自愈部署失败: %s", err)
 			} else {
 				refreshVersion()
 			}
@@ -996,10 +992,10 @@ func RestoreSnapshot(id string) error {
 		Message: "等待服务就绪",
 	})
 
-	LogInfo("快照 [%s] 数据恢复全部就绪 (还原总耗时: %s)，正在重新拉起服务...", id, time.Since(restoreStart).Round(time.Millisecond))
+	LogInfo("[快照] 快照 [%s] 数据还原完成 (总耗时=%s)，拉起服务", id, time.Since(restoreStart).Round(time.Millisecond))
 	state.SetStatus(StatusStopped, "")
 	if err := Start(); err != nil {
-		LogWarning("还原后服务自启失败: %s", err)
+		LogWarning("[快照] 还原后服务自启失败: %s", err)
 	}
 
 	setSnapshotProgress(SnapshotProgress{
@@ -1036,7 +1032,7 @@ func DeleteSnapshot(id string) error {
 		return fmt.Errorf("删除快照失败: %w", err)
 	}
 
-	LogInfo("已删除快照 [%s]", id)
+	LogInfo("[快照] 已删除快照 [%s]", id)
 	notifySnapshot()
 	return nil
 }

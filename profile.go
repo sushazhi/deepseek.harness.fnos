@@ -239,7 +239,7 @@ func SetPluginDisabled(profile, packageName string, disabled bool) error {
 	if disabled {
 		stateAction = "禁用"
 	}
-	LogInfo("[Cordis Patch] 已通过 user patch %s 插件 %s (Entry IDs: %v)", stateAction, packageName, entryIDs)
+	LogInfo("[插件] 已通过 user patch %s 插件 %s (Entry IDs: %v)", stateAction, packageName, entryIDs)
 	return nil
 }
 
