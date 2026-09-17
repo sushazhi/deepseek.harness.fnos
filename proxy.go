@@ -520,68 +520,6 @@ const httpPolyfillScript = `<style>[data-slot="settings.action"] { display: none
     };
     if(!install(c)&&Object.getPrototypeOf(c))install(Object.getPrototypeOf(c));
   }
-
-  var hookModuleLoader = function (loader) {
-    if (!loader || typeof loader.load !== "function" || loader.__hooked) return loader;
-    var rawLoad = loader.load.bind(loader);
-    loader.load = function (handoff) {
-      if (handoff && handoff.id === "@deepseek-ai/dsh-client-connection" && typeof handoff.factory === "function") {
-        var rawFactory = handoff.factory;
-        handoff.factory = function () {
-          var modExports = rawFactory.apply(this, arguments);
-          if (modExports && typeof modExports.apply === "function") {
-            var rawApply = modExports.apply;
-            modExports.apply = function (ctx) {
-              if (ctx && typeof ctx.provide === "function") {
-                var proxyCtx = new Proxy(ctx, {
-                  get: function (target, prop, receiver) {
-                    if (prop === "provide") {
-                      return function (name, handle) {
-                        if (name === "connection" && handle && typeof handle === "object") {
-                          try {
-                            Object.defineProperty(handle, "isLoopback", {
-                              value: true,
-                              writable: true,
-                              configurable: true
-                            });
-                          } catch (_) {
-                            handle.isLoopback = true;
-                          }
-                        }
-                        return Reflect.apply(target.provide, target, arguments);
-                      };
-                    }
-                    return Reflect.get(target, prop, receiver);
-                  }
-                });
-                return rawApply.call(this, proxyCtx);
-              }
-              return rawApply.apply(this, arguments);
-            };
-          }
-          return modExports;
-        };
-      }
-      return rawLoad(handoff);
-    };
-    loader.__hooked = true;
-    return loader;
-  };
-  if (window.__ModuleLoader__) {
-    hookModuleLoader(window.__ModuleLoader__);
-  } else {
-    var storedLoader = undefined;
-    try {
-      Object.defineProperty(window, "__ModuleLoader__", {
-        configurable: true,
-        enumerable: true,
-        get: function () { return storedLoader; },
-        set: function (val) {
-          storedLoader = hookModuleLoader(val);
-        }
-      });
-    } catch (_) {}
-  }
 })();</script>`
 
 // injectHtmlPolyfill 将兼容补丁注入 HTML 的 head 头部

@@ -281,9 +281,20 @@ func ApplyBuiltinSkillConfig() {
 	targetSkill := filepath.Join(skillsDir, "trim-cli")
 
 	if !enabled {
-		_ = os.RemoveAll(targetSkill)
-		LogInfo("[内置技能] 飞牛官方 TRIM CLI 技能已禁用并移除")
+		if _, err := os.Stat(targetSkill); err == nil {
+			_ = os.RemoveAll(targetSkill)
+			LogInfo("[内置技能] 飞牛官方 TRIM CLI 技能已禁用并移除")
+		}
 		return
+	}
+
+	// 若已就绪且源目录未更新则跳过重复部署
+	if sInfo, err := os.Stat(filepath.Join(skillSrc, "SKILL.md")); err == nil {
+		if dInfo, err := os.Stat(filepath.Join(targetSkill, "SKILL.md")); err == nil {
+			if !sInfo.ModTime().After(dInfo.ModTime()) {
+				return
+			}
+		}
 	}
 
 	_ = os.MkdirAll(skillsDir, 0755)

@@ -714,68 +714,20 @@ func fnGatewayBridgeScript() string {
       };
     }
 
-    // DSH 客户端回环状态与配置持久化兼容补丁
+    // DSH 客户端回环状态与配置持久化兼容补丁（上游原生 ownsHost 契约声明）
     try{targetWindow.__DSH_TRANSPORT__=Object.assign(targetWindow.__DSH_TRANSPORT__||{},{ownsHost:true});}catch(_){}
-    var hookModuleLoader = function (loader) {
-      if (!loader || typeof loader.load !== "function" || loader.__hooked) return loader;
-      var rawLoad = loader.load.bind(loader);
-      loader.load = function (handoff) {
-        if (handoff && handoff.id === "@deepseek-ai/dsh-client-connection" && typeof handoff.factory === "function") {
-          var rawFactory = handoff.factory;
-          handoff.factory = function () {
-            var modExports = rawFactory.apply(this, arguments);
-            if (modExports && typeof modExports.apply === "function") {
-              var rawApply = modExports.apply;
-              modExports.apply = function (ctx) {
-                if (ctx && typeof ctx.provide === "function") {
-                  var proxyCtx = new Proxy(ctx, {
-                    get: function (target, prop, receiver) {
-                      if (prop === "provide") {
-                        return function (name, handle) {
-                          if (name === "connection" && handle && typeof handle === "object") {
-                            try {
-                              Object.defineProperty(handle, "isLoopback", {
-                                value: true,
-                                writable: true,
-                                configurable: true
-                              });
-                            } catch (_) {
-                              handle.isLoopback = true;
-                            }
-                          }
-                          return Reflect.apply(target.provide, target, arguments);
-                        };
-                      }
-                      return Reflect.get(target, prop, receiver);
-                    }
-                  });
-                  return rawApply.call(this, proxyCtx);
-                }
-                return rawApply.apply(this, arguments);
-              };
-            }
-            return modExports;
-          };
-        }
-        return rawLoad(handoff);
-      };
-      loader.__hooked = true;
-      return loader;
-    };
 
-    if (targetWindow.__ModuleLoader__) {
-      hookModuleLoader(targetWindow.__ModuleLoader__);
-    } else {
-      var storedLoader = undefined;
-      try {
-        Object.defineProperty(targetWindow, "__ModuleLoader__", {
-          configurable: true,
-          enumerable: true,
-          get: function () { return storedLoader; },
-          set: function (val) { storedLoader = hookModuleLoader(val); }
-        });
-      } catch (_) {}
-    }
+    // DSH 客户端附件上传网关子路径适配（上游原生 __DSH_FILE_UPLOAD__ 契约）
+    try {
+      targetWindow.__DSH_FILE_UPLOAD__ = {
+        fetch: function (inputUrl, init) {
+          var mapped = toGatewayUrl(inputUrl);
+          var finalInit = init || {};
+          if (!finalInit.credentials) finalInit.credentials = "include";
+          return targetWindow.fetch(mapped !== null ? mapped.toString() : inputUrl, finalInit);
+        }
+      };
+    } catch (_) {}
   };
 
   installBridge(window);
