@@ -263,7 +263,7 @@ func InitHarness() {
 	ApplyBuiltinSkillConfig()
 	go installPnpm()
 	if GetLastRunState() == StatusRunning {
-		LogInfo("检测到上次运行状态为 running，正在自动拉起服务")
+		LogInfo("恢复上次运行状态 (running)，正在拉起服务...")
 		go func() {
 			if err := Start(); err != nil {
 				LogWarning("服务启动失败: %s", err)
@@ -342,14 +342,8 @@ func SetCurrentLaunchToken(token string) {
 		InvalidateDshSession()
 	}
 	launchTokenMu.Unlock()
-	if trimmed != "" {
-		display := trimmed
-		if len(display) > 8 {
-			display = display[:8] + "..."
-		}
-		LogInfo("已捕获 Web 会话令牌: %s", display)
-	}
 }
+
 
 // InvalidateDshSession 清空缓存的官方会话凭据
 func InvalidateDshSession() {
@@ -413,7 +407,7 @@ func exchangeDshSessionCookie(token string) string {
 			dshSessionMu.Lock()
 			cachedDshCookie = val
 			dshSessionMu.Unlock()
-			LogInfo("已换取官方 Web 会话凭据 (authority=%s)", authority)
+			LogInfo("[会话代持] 已同步官方 Web 会话凭据 (authority=%s)", authority)
 			return val
 		}
 	}
@@ -494,8 +488,7 @@ func startLocked() error {
 
 	_ = os.WriteFile(pidFilePath(), []byte(strconv.Itoa(cmd.Process.Pid)), 0644)
 
-	state.SetStatus(StatusStarting, "服务主进程已拉起，正在等待 Web 服务就绪...")
-	LogInfo("服务主进程已拉起 (PID=%d)，正在等待 Web 服务就绪...", cmd.Process.Pid)
+	state.SetStatus(StatusStarting, fmt.Sprintf("主进程已拉起 (PID=%d)，等待 Web 就绪...", cmd.Process.Pid))
 
 	go waitAndActivateReverseProxy(mp, port)
 
@@ -509,8 +502,7 @@ func startLocked() error {
 				SetCurrentLaunchToken("")
 				removePidFileIfMatches(mp.Pid())
 				stopReverseProxy()
-				LogInfo("服务主进程已按要求停止 (PID=%d)", mp.Pid())
-				state.SetStatus(StatusStopped, "")
+				state.SetStatus(StatusStopped, fmt.Sprintf("主进程已停止 (PID=%d)", mp.Pid()))
 			}
 			procMu.Unlock()
 			mp.closeDone()

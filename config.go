@@ -283,7 +283,7 @@ func ApplyBuiltinSkillConfig() {
 	if !enabled {
 		if _, err := os.Stat(targetSkill); err == nil {
 			_ = os.RemoveAll(targetSkill)
-			LogInfo("[内置技能] 飞牛官方 TRIM CLI 技能已禁用并移除")
+			LogInfo("[内置技能] 飞牛官方 TRIM CLI 技能已移除")
 		}
 		return
 	}
@@ -314,7 +314,7 @@ func ApplyBuiltinSkillConfig() {
 		}
 	}
 
-	LogInfo("[内置技能] 飞牛官方 TRIM CLI 技能已就绪 (目标: %s)", targetSkill)
+	LogInfo("[内置技能] 飞牛官方 TRIM CLI 技能已同步")
 }
 
 // copyFile 复制单个文件并保留权限

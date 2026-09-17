@@ -431,7 +431,7 @@ func startReverseProxyLocked() error {
 
 	proxyHTTP = &http.Server{Handler: proxyWithAuth(proxy)}
 
-	LogInfo("Web 服务就绪探测通过，反向代理启动完成 [%s → %s]", proxyAddr, proxyTarget.String())
+	LogInfo("[反向代理] 已启动监听 [%s → %s]", proxyAddr, proxyTarget.String())
 
 	go func() {
 		if err := proxyHTTP.Serve(ln); err != nil && !isExpectedCloseErr(err) {
@@ -467,7 +467,7 @@ func stopReverseProxyLocked() {
 	defer cancel()
 	_ = proxyHTTP.Shutdown(ctx)
 	proxyHTTP = nil
-	LogInfo("反向代理服务已停止")
+	LogInfo("[反向代理] 监听已停止")
 }
 
 // proxyErrMessage 根据当前服务状态给出准确的代理错误提示
