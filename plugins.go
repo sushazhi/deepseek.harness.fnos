@@ -18,8 +18,8 @@ import (
 )
 
 const (
-	pluginRemoveTimeout  = 60 * time.Second
-	pluginInstallTimeout = 180 * time.Second
+	pluginRemoveTimeout  = 300 * time.Second
+	pluginInstallTimeout = 600 * time.Second
 )
 
 // pluginEnv 注入网络超时与重试收敛参数，防止 npm/pnpm 无限挂起
@@ -68,7 +68,6 @@ var (
 	gitURLRe        = regexp.MustCompile(`^(git\+)?(https?:\/\/|ssh:\/\/)[^\s;|` + "`" + `$()]+$`)
 	gitShorthandRe  = regexp.MustCompile(`^github:[a-zA-Z0-9_.-]+\/[a-zA-Z0-9_.-]+(?:#[^\s;|` + "`" + `$()]+)?$`)
 	localSpecRe     = regexp.MustCompile(`^(file:|\/).+$`)
-	profileNameRe   = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 	specForbiddenRe = regexp.MustCompile(`[;|` + "`" + `$()\r\n]`)
 )
 
@@ -151,8 +150,14 @@ func parsePluginCommand(input string) (*pluginCommand, error) {
 		return nil, err
 	}
 	if len(fields) == 0 {
-		return nil, fmt.Errorf("请输入插件命令")
+		return nil, fmt.Errorf("请输入插件命令或包名")
 	}
+
+	// 兼容：直接输入包名时自动补全为标准添加命令
+	if fields[0] != "dsh" {
+		fields = append([]string{"dsh", "plugin", "--profile", "web", "add"}, fields...)
+	}
+
 	if len(fields) < 2 || fields[0] != "dsh" || fields[1] != "plugin" {
 		return nil, fmt.Errorf("请输入标准 dsh 命令，例如: dsh plugin --profile web add 包名")
 	}
@@ -166,10 +171,10 @@ func parsePluginCommand(input string) (*pluginCommand, error) {
 				return nil, fmt.Errorf("--profile 缺少参数")
 			}
 			name := fields[i+1]
-			if !profileNameRe.MatchString(name) {
-				return nil, fmt.Errorf("非法的 profile 名称: %s", name)
+			if name != "web" {
+				return nil, fmt.Errorf("当前仅支持 web 参数 (--profile web)")
 			}
-			profile = name
+			profile = "web"
 			i++
 			continue
 		}
@@ -335,8 +340,6 @@ func restoreProfileSnapshot(dir string, snap *profileSnapshot) {
 		_ = os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), snap.pnpmLock, 0644)
 	}
 }
-
-
 
 func handleListPlugins(c *gin.Context) {
 	dir := pluginProfileDir()
@@ -649,59 +652,13 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 		return doneMsg, nil
 	}
 
-	if cmd.Verb != pluginAdd && cmd.Verb != pluginUpdate && cmd.Verb != pluginInstall && cmd.Verb != pluginRemove {
-		return "", fmt.Errorf("%s", FormatPnpmFailureMessage(runErr.Error()))
-	}
-
-	failure := ClassifyPnpmFailure(runErr.Error())
-
-	// 依赖结构差异自愈
-	if failure.Code == PnpmFailureHoistPatternDiff {
-		LogWarning("[插件] 依赖结构存在差异，执行重建依赖")
-		_ = runPluginSubprocess([]string{"plugin", "--profile", cmd.Profile, "install", "--no-frozen-lockfile"}, timeout)
-		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
-			return doneMsg + "（已自动重建依赖）", nil
-		}
-		failure = ClassifyPnpmFailure(runErr.Error())
-	}
-
-	// 存储位置异常自愈
-	if failure.Code == PnpmFailureUnexpectedStore {
-		_ = os.RemoveAll(filepath.Join(pluginProfileDir(), "node_modules"))
-		LogWarning("[插件] 存储位置变更，清理本地缓存并重试")
-		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
-			return doneMsg, nil
-		}
-		failure = ClassifyPnpmFailure(runErr.Error())
-	}
-
-	// 大包下载超时自愈
-	if failure.Code == PnpmFailureFetchTimeout {
-		LogWarning("[插件] 依赖包下载超时，延长超时至 10 分钟并重试")
-		retryArgs := append([]string{}, args...)
-		retryArgs = append(retryArgs, "--config.fetchTimeout=600000")
-		if runErr = runPluginSubprocess(retryArgs, timeout+10*time.Minute); runErr == nil {
-			return doneMsg + "（已自动延长超时完成下载）", nil
-		}
-		failure = ClassifyPnpmFailure(runErr.Error())
-	}
-
-	// 网络波动自愈
-	if failure.Code == PnpmFailureTransientNetwork {
-		LogWarning("[插件] 检测到网络瞬态异常，执行自动重试")
-		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
-			return doneMsg, nil
-		}
-		failure = ClassifyPnpmFailure(runErr.Error())
-	}
-
-	// 构建脚本拦截自愈：直接放行写入 pnpm-workspace.yaml 并重新执行
+	// 构建脚本拦截自愈：放行依赖构建脚本并重试一次
 	pkgs := parseBlockedPackages(runErr.Error())
 	if len(pkgs) > 0 {
 		if err := approveBuilds(pluginProfileDir(), pkgs); err == nil {
-			LogWarning("[插件] 构建脚本被拦截 [%s]，已自动放行并重新执行", strings.Join(pkgs, ", "))
+			LogWarning("[插件] 构建脚本被拦截 [%s]，已放行并重试", strings.Join(pkgs, ", "))
 			if runErr = runPluginSubprocess(args, timeout); runErr == nil {
-				return doneMsg + "（已自动放行构建脚本: " + strings.Join(pkgs, ", ") + "）", nil
+				return doneMsg + "（已放行构建脚本: " + strings.Join(pkgs, ", ") + "）", nil
 			}
 		}
 	}

@@ -458,7 +458,11 @@ export function viteDevMock(): Plugin {
             return sendJson(res, 0, 'success', { valid: false, ok: false, reason: '请输入插件命令' })
           }
 
-          const parts = raw.split(/\s+/)
+          let parts = raw.split(/\s+/)
+          if (parts[0] !== 'dsh') {
+            parts = ['dsh', 'plugin', '--profile', 'web', 'add', ...parts]
+          }
+
           if (parts[0] !== 'dsh' || parts[1] !== 'plugin') {
             return sendJson(res, 0, 'success', {
               valid: false,
@@ -473,7 +477,14 @@ export function viteDevMock(): Plugin {
 
           for (let i = 2; i < parts.length; i++) {
             if (parts[i] === '--profile' && i + 1 < parts.length) {
-              profile = parts[i + 1]
+              if (parts[i + 1] !== 'web') {
+                return sendJson(res, 0, 'success', {
+                  valid: false,
+                  ok: false,
+                  reason: '当前系统仅支持 web 运行环境 (--profile web)'
+                })
+              }
+              profile = 'web'
               i++
               continue
             }
@@ -533,7 +544,10 @@ export function viteDevMock(): Plugin {
             return sendJson(res, 409, '插件操作正在进行中，请稍候', null)
           }
 
-          const parts = raw.split(/\s+/)
+          let parts = raw.split(/\s+/)
+          if (parts[0] !== 'dsh') {
+            parts = ['dsh', 'plugin', '--profile', 'web', 'add', ...parts]
+          }
           let verb = 'add'
           const specs: string[] = []
 
