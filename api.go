@@ -54,7 +54,7 @@ func InitRoutes(r *gin.Engine) {
 
 	sub, err := fs.Sub(WebFS, "frontend/dist")
 	if err != nil {
-		LogFatal("[系统] 静态前端资源装载失败: %s", err)
+		LogFatal("[API] 静态前端资源装载失败: %s", err)
 	}
 	fileServer := http.FileServer(http.FS(sub))
 
@@ -205,7 +205,7 @@ type wsMsg struct {
 func handleWS(c *gin.Context) {
 	conn, err := wsUpgrader.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
-		LogWarning("[系统] WebSocket 连接升级失败: %s", err)
+		LogWarning("[API] WebSocket 连接升级失败: %s", err)
 		return
 	}
 	defer conn.Close()
@@ -581,7 +581,7 @@ func handleSaveConfig(c *gin.Context) {
 
 	if serverPortChanged {
 		if state.Status() == StatusRunning {
-			LogInfo("[设置] 内部监听端口变更 (%d → %d)，重启服务", oldCfg.ServerPort, cfg.ServerPort)
+			LogInfo("[配置] 内部监听端口变更 (%d → %d)，重启服务", oldCfg.ServerPort, cfg.ServerPort)
 			go func() {
 				_ = Restart()
 			}()
@@ -590,14 +590,14 @@ func handleSaveConfig(c *gin.Context) {
 		}
 	} else if heapMemChanged {
 		if state.Status() == StatusRunning {
-			LogInfo("[设置] 堆内存上限变更 (%dG → %dG)，重启服务", oldCfg.HeapMemoryLimit, cfg.HeapMemoryLimit)
+			LogInfo("[配置] 堆内存上限变更 (%dG → %dG)，重启服务", oldCfg.HeapMemoryLimit, cfg.HeapMemoryLimit)
 			go func() {
 				_ = Restart()
 			}()
 		}
 	} else if proxyDshChanged {
 		if state.Status() == StatusRunning {
-			LogInfo("[设置] 运行时网络代理配置变更，重启服务应用环境变量")
+			LogInfo("[配置] 运行时网络代理配置变更，重启服务应用环境变量")
 			go func() {
 				_ = Restart()
 			}()

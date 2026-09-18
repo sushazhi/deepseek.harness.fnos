@@ -33,17 +33,17 @@ var (
 func main() {
 	globalPkgVar = os.Getenv("DATA_LIBRARY_PATH")
 	if globalPkgVar == "" {
-		LogFatal("[系统] 环境变量缺失: DATA_LIBRARY_PATH")
+		LogFatal("[主程序] 环境变量缺失: DATA_LIBRARY_PATH")
 	}
 
 	globalAppDest = strings.TrimSpace(os.Getenv("TRIM_APPDEST"))
 	if globalAppDest == "" {
-		LogFatal("[系统] 环境变量缺失: TRIM_APPDEST")
+		LogFatal("[主程序] 环境变量缺失: TRIM_APPDEST")
 	}
 
 	globalAppVer = strings.TrimSpace(os.Getenv("TRIM_APPVER"))
 	if globalAppVer == "" {
-		LogFatal("[系统] 环境变量缺失: TRIM_APPVER")
+		LogFatal("[主程序] 环境变量缺失: TRIM_APPVER")
 	}
 
 	globalRunUser = os.Getenv("DSH_RUN_USER")
@@ -61,13 +61,13 @@ func main() {
 	runtimeDir = filepath.Join(globalPkgVar, "dsh-runtime")
 
 	InitLogger()
-	LogInfo("[系统] 服务启动初始化 (DATA_LIBRARY_PATH=%s, TRIM_APPDEST=%s, TRIM_APPVER=%s, DSH_RUN_USER=%s)", globalPkgVar, globalAppDest, globalAppVer, globalRunUser)
+	LogInfo("[主程序] 服务启动初始化 (DATA_LIBRARY_PATH=%s, TRIM_APPDEST=%s, TRIM_APPVER=%s, DSH_RUN_USER=%s)", globalPkgVar, globalAppDest, globalAppVer, globalRunUser)
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
 	go func() {
 		sig := <-sigCh
-		LogInfo("[系统] 捕获终止信号 %s，执行停机流程", sig)
+		LogInfo("[主程序] 捕获终止信号 %s，执行停机流程", sig)
 		stopAndWait()
 		os.Exit(0)
 	}()
@@ -91,16 +91,16 @@ func main() {
 
 	listener, err := net.Listen("unix", socketPath)
 	if err != nil {
-		LogFatal("[系统] Unix Socket 监听失败 [%s]: %s", socketPath, err)
+		LogFatal("[主程序] Unix Socket 监听失败 [%s]: %s", socketPath, err)
 	}
 	defer listener.Close()
 
 	if err := os.Chmod(socketPath, 0666); err != nil {
-		LogWarning("[系统] Unix Socket 权限设置失败: %s", err)
+		LogWarning("[主程序] Unix Socket 权限设置失败: %s", err)
 	}
 
-	LogInfo("[系统] HTTP 服务已就绪，监听 Socket: %s", socketPath)
+	LogInfo("[主程序] HTTP 服务已就绪，监听 Socket: %s", socketPath)
 	if err := r.RunListener(listener); err != nil {
-		LogFatal("[系统] HTTP 服务异常退出: %s", err)
+		LogFatal("[主程序] HTTP 服务异常退出: %s", err)
 	}
 }

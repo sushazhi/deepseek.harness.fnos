@@ -283,7 +283,7 @@ func ApplyBuiltinSkillConfig() {
 	if !enabled {
 		if _, err := os.Stat(targetSkill); err == nil {
 			_ = os.RemoveAll(targetSkill)
-			LogInfo("[设置] 飞牛官方 TRIM CLI 技能已移除")
+			LogInfo("[技能] 飞牛官方 TRIM CLI 技能已移除")
 		}
 		return
 	}
@@ -302,7 +302,7 @@ func ApplyBuiltinSkillConfig() {
 	// 复制技能目录，避免沙箱软链接隔离权限异常
 	_ = os.RemoveAll(targetSkill)
 	if err := copyDir(skillSrc, targetSkill); err != nil {
-		LogError("[设置] 复制技能文件失败: %v", err)
+		LogError("[技能] 复制技能文件失败: %v", err)
 		return
 	}
 
@@ -314,7 +314,7 @@ func ApplyBuiltinSkillConfig() {
 		}
 	}
 
-	LogInfo("[设置] 飞牛官方 TRIM CLI 技能已同步")
+	LogInfo("[技能] 飞牛官方 TRIM CLI 技能已同步")
 }
 
 // copyFile 复制单个文件并保留权限

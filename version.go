@@ -81,7 +81,7 @@ func fetchAppRemoteUpdate() {
 
 			cleanLocal := strings.TrimPrefix(strings.TrimSpace(localVer), "v")
 			if CompareSemver(rVer, cleanLocal) > 0 && rVer != oldRemoteVer {
-				LogInfo("[更新] 发现新版本 v%s (当前版本 v%s)", rVer, cleanLocal)
+				LogInfo("[版本] 发现新版本 v%s (当前版本 v%s)", rVer, cleanLocal)
 			}
 			return
 		}

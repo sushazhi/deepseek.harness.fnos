@@ -170,16 +170,16 @@ func deployBuiltinPackage(tarPath, zipVer string, isUpgrade bool) {
 		installedVer := readVersion()
 		if isUpgrade && installedVer != "" && zipVer != "" {
 			state.SetStatus(StatusBuilding, fmt.Sprintf("正在升级运行环境 (v%s → v%s)...", installedVer, zipVer))
-			LogInfo("[更新] 部署新版离线安装包 (v%s → v%s)", installedVer, zipVer)
+			LogInfo("[部署] 部署新版离线安装包 (v%s → v%s)", installedVer, zipVer)
 		} else {
 			state.SetStatus(StatusBuilding, "正在部署内置运行环境...")
-			LogInfo("[更新] 部署内置离线安装包 (v%s)", zipVer)
+			LogInfo("[部署] 部署内置离线安装包 (v%s)", zipVer)
 		}
 
 		_ = safeRemoveAll(runtimeDir)
 
 		if err := extractTarGz(tarPath, runtimeDir); err != nil {
-			LogWarning("[更新] 解压离线安装包失败: %s", err)
+			LogWarning("[部署] 解压离线安装包失败: %s", err)
 			state.SetStatus(StatusStopped, "解压离线包失败: "+err.Error())
 			return
 		}
@@ -188,9 +188,9 @@ func deployBuiltinPackage(tarPath, zipVer string, isUpgrade bool) {
 		SetBuildTime(time.Now())
 		go installPnpm()
 		state.SetStatus(StatusStopped, "")
-		LogInfo("[服务] 运行环境部署完成，拉起服务")
+		LogInfo("[核心] 运行环境部署完成，拉起服务")
 		if err := Start(); err != nil {
-			LogWarning("[服务] 服务启动失败: %s", err)
+			LogWarning("[核心] 服务启动失败: %s", err)
 		}
 	}()
 }
@@ -199,9 +199,9 @@ func deployBuiltinPackage(tarPath, zipVer string, isUpgrade bool) {
 func migrateFromGitToNpm() {
 	legacySrcDir := filepath.Join(globalPkgVar, "src")
 	if fi, err := os.Stat(legacySrcDir); err == nil && fi.IsDir() {
-		LogInfo("[更新] 检测到旧版源码目录，执行清理: %s", legacySrcDir)
+		LogInfo("[部署] 检测到旧版源码目录，执行清理: %s", legacySrcDir)
 		if err := safeRemoveAll(legacySrcDir); err != nil {
-			LogWarning("[更新] 清理旧版源码目录失败: %s", err)
+			LogWarning("[部署] 清理旧版源码目录失败: %s", err)
 		}
 	}
 
@@ -230,27 +230,27 @@ func InitHarness() {
 	if _, err := os.Stat(tarPath); err == nil {
 		shouldDeploy, isUpgrade, reason := EvaluateDeploymentPolicy(tarPath)
 		if shouldDeploy {
-			LogInfo("[更新] %s", reason)
+			LogInfo("[部署] %s", reason)
 			deployBuiltinPackage(tarPath, zipVer, isUpgrade)
 			return
 		}
-		LogInfo("[更新] %s", reason)
+		LogInfo("[部署] %s", reason)
 	} else if !isRuntimeReady() {
 		// 未内置压缩包且本地无运行时，自动安装部署
 		state.SetStatus(StatusBuilding, "正在部署核心运行环境...")
-		LogInfo("[更新] 未检测到离线安装包，执行在线安装核心服务: %s", dshPackageName)
+		LogInfo("[部署] 未检测到离线安装包，执行在线安装核心服务: %s", dshPackageName)
 		go func() {
 			_ = safeRemoveAll(runtimeDir)
 			if err := installDshFromNpm(""); err != nil {
-				LogWarning("[更新] 在线安装核心服务失败: %s", err)
+				LogWarning("[部署] 在线安装核心服务失败: %s", err)
 				state.SetStatus(StatusStopped, "安装失败: "+err.Error())
 				return
 			}
 			refreshVersion()
 			state.SetStatus(StatusStopped, "")
-			LogInfo("[服务] 核心环境部署完成，拉起服务")
+			LogInfo("[核心] 核心环境部署完成，拉起服务")
 			if err := Start(); err != nil {
-				LogWarning("[服务] 服务启动失败: %s", err)
+				LogWarning("[核心] 服务启动失败: %s", err)
 			}
 		}()
 		return
@@ -261,14 +261,14 @@ func InitHarness() {
 	ApplyBuiltinSkillConfig()
 	go installPnpm()
 	if GetLastRunState() == StatusRunning {
-		LogInfo("[服务] 恢复上次运行状态 (running)，拉起服务")
+		LogInfo("[核心] 恢复上次运行状态 (running)，拉起服务")
 		go func() {
 			if err := Start(); err != nil {
-				LogWarning("[服务] 服务启动失败: %s", err)
+				LogWarning("[核心] 服务启动失败: %s", err)
 			}
 		}()
 	} else {
-		LogInfo("[服务] 上次运行状态为 %s，跳过自启", GetLastRunState())
+		LogInfo("[核心] 上次运行状态为 %s，跳过自启", GetLastRunState())
 	}
 }
 
@@ -509,9 +509,9 @@ func startLocked() error {
 
 		// 非主动退出由看门狗接管
 		if err != nil {
-			LogWarning("[服务] 服务主进程异常退出 (PID=%d): %s", mp.Pid(), err)
+			LogWarning("[核心] 服务主进程异常退出 (PID=%d): %s", mp.Pid(), err)
 		} else {
-			LogInfo("[服务] 服务主进程正常退出 (PID=%d)", mp.Pid())
+			LogInfo("[核心] 服务主进程正常退出 (PID=%d)", mp.Pid())
 		}
 	}(mp)
 
@@ -527,7 +527,7 @@ func stopAndWait() {
 	if mp != nil {
 		mp.stopRequested = true
 		pid = mp.Pid()
-		LogInfo("[服务] 终止服务主进程 (PID=%d)", pid)
+		LogInfo("[核心] 终止服务主进程 (PID=%d)", pid)
 		killProcessTree(pid)
 		killProcessGroup(pid)
 		removePidFileIfMatches(pid)
@@ -566,11 +566,11 @@ func Restart() error {
 }
 
 func restartService() {
-	LogInfo("[服务] 核心部署就绪，正在重启服务")
+	LogInfo("[核心] 核心部署就绪，正在重启服务")
 	stopAndWait()
 	state.SetStatus(StatusStopped, "")
 	if err := Start(); err != nil {
-		LogWarning("[服务] 服务重启失败: %s", err)
+		LogWarning("[核心] 服务重启失败: %s", err)
 		state.SetStatus(StatusStopped, "启动失败: "+err.Error())
 	}
 }
@@ -606,7 +606,7 @@ func waitAndActivateReverseProxy(mp *managedProcess, port int) {
 			// 进程已退出，终止探测
 			return
 		case <-timeout:
-			LogWarning("[服务] Web 服务就绪探测超时 (300s)，目标端口: %d", port)
+			LogWarning("[核心] Web 服务就绪探测超时 (300s)，目标端口: %d", port)
 			procMu.Lock()
 			if process == mp {
 				killHarnessLocked()
