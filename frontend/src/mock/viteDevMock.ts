@@ -88,7 +88,6 @@ export function viteDevMock(): Plugin {
           version: '0.2.6',
           spec: 'workspace:*',
           state: 'live',
-          layer: true,
           entryIds: ['dsh-settings'],
           description: '系统核心配置与设置基础设施组件。',
           author: 'DeepSeek AI',
@@ -103,7 +102,6 @@ export function viteDevMock(): Plugin {
           version: '0.12.2',
           spec: '^0.12.2',
           state: 'live',
-          layer: true,
           entryIds: ['better-sidebar'],
           description: '增强型侧边栏管理工具，提供会话分组、快捷置顶与工作区快速切换功能。',
           author: 'DeepSeek Community',
@@ -118,7 +116,6 @@ export function viteDevMock(): Plugin {
           version: '0.8.5',
           spec: '^0.8.0',
           state: 'live',
-          layer: true,
           entryIds: ['tool-web-search'],
           description: '为大模型提供实时联网搜索能力的扩展工具。',
           author: 'DeepSeek AI',
@@ -133,7 +130,6 @@ export function viteDevMock(): Plugin {
           version: '1.0.4',
           spec: 'github:Small-tailqwq/dsh-deep-whale#path:/maid-atelier',
           state: 'disabled',
-          layer: false,
           entryIds: ['maid-atelier-skin'],
           description: '女仆工坊定制深色主题皮肤包。',
           author: 'Small-tailqwq',
@@ -441,7 +437,7 @@ export function viteDevMock(): Plugin {
           return sendJson(res, 0, 'success', {
             profile: 'web',
             plugins,
-            bundles: plugins.filter((p) => p.layer).map((p) => p.name)
+            bundles: plugins.filter((p) => p.state === 'live').map((p) => p.name)
           })
         }
 
@@ -520,7 +516,6 @@ export function viteDevMock(): Plugin {
           }
 
           target.state = (body.enabled ? 'live' : 'disabled') as PluginState
-          target.layer = body.enabled
 
           appendLog(`[INFO] [Cordis Patch] 已${body.enabled ? '启用' : '禁用'}插件 ${target.name}`)
           return sendJson(res, 0, `${body.enabled ? '已启用' : '已禁用'}插件「${target.name}」`, {
@@ -573,7 +568,6 @@ export function viteDevMock(): Plugin {
                     version: '1.0.0',
                     spec: pkgName,
                     state: 'live',
-                    layer: true,
                     entryIds: [cleanName.replace(/[@/]/g, '-')],
                     description: cleanName === 'dshmarket'
                       ? 'DSH 官方第三方插件市场，支持图形化发现与一键安装扩展。'

@@ -54,9 +54,6 @@ export const usePluginStore = defineStore('plugin', () => {
     }, 200)
   }
 
-  function fillDshMarketCommand() {
-    setCommand('dsh plugin --profile web add dshmarket')
-  }
 
   const canInstall = computed(() => {
     return Boolean(!pluginBusy.value && command.value.trim() && preview.value?.valid)
@@ -193,7 +190,6 @@ export const usePluginStore = defineStore('plugin', () => {
     markRestartNeeded,
     clearRestartNeeded,
     setCommand,
-    fillDshMarketCommand,
     fetchPlugins,
     updatePluginStatus,
     installPlugin,

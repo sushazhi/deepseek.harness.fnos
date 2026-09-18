@@ -74,10 +74,10 @@ export interface WorkspaceData {
 }
 
 /**
- * 插件运行状态
- * - live: 正常作为层活跃运行中
- * - disabled: 在 cordis.patch.yml 中被显式禁用
- * - inert: 已安装依赖但未声明 dsh.bundle
+ * 插件状态:
+ * - live: 已启用
+ * - disabled: 已停用
+ * - inert: 普通依赖 (未声明 bundle)
  */
 export type PluginState = 'live' | 'disabled' | 'inert'
 
@@ -89,7 +89,6 @@ export interface PluginItem {
   spec?: string
   version?: string
   state: PluginState
-  layer: boolean
   entryIds?: string[]
   description?: string
   author?: string
@@ -192,6 +191,7 @@ export interface SnapshotProgressTask {
   percent: number
   stage?: string
   message?: string
+  error?: string
 }
 
 /**

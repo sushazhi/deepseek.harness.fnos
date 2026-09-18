@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,13 +13,15 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-var npmNameStripRe = regexp.MustCompile(`^((?:@[a-z0-9-~][\w.-]*/)?[a-z0-9-~][\w.-]*)@.+$`)
+var (
+	profileFileMu   sync.Mutex
+	npmNameStripRe  = regexp.MustCompile(`^((?:@[a-z0-9-~][\w.-]*/)?[a-z0-9-~][\w.-]*)@.+$`)
+	blockedBuildsRe = regexp.MustCompile(`(?i)Ignored build scripts:\s*(.+)`)
+	pkgNameRe       = regexp.MustCompile(`^(@?[a-zA-Z0-9][\w.-]*(?:/[@a-zA-Z0-9][\w.-]*)?)@[0-9]`)
+)
 
-func profileDirFor(name string) string {
-	return filepath.Join(globalDshHome, "profiles", name)
-}
 
-// normalizePluginKey 提取标准包名，去除 npm 版本号
+// normalizePluginKey 提取标准包名，去除版本后缀
 func normalizePluginKey(spec string) string {
 	if m := npmNameStripRe.FindStringSubmatch(spec); len(m) >= 2 {
 		return m[1]
@@ -28,27 +29,11 @@ func normalizePluginKey(spec string) string {
 	return spec
 }
 
-// 核心受保护模块正则
+// 核心基础设施受保护模块正则
 var protectedModulePatterns = []*regexp.Regexp{
 	regexp.MustCompile(`^cordis:`),
-	regexp.MustCompile(`^@deepseek-ai/cordis-plugin-`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-host-`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-client-`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-web`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-settings`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-credentials`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-session`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-storage`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-tools`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-system-prompt`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-agent`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-llm`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-shell`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-fs`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-sandbox`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-jobs`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-base`),
-	regexp.MustCompile(`^@deepseek-ai/dsh-web-app`),
+	regexp.MustCompile(`^@deepseek-ai/cordis-`),
+	regexp.MustCompile(`^@deepseek-ai/dsh-`),
 }
 
 // IsProtectedPlugin 检查是否为受保护的核心基础设施模块
@@ -64,191 +49,194 @@ func IsProtectedPlugin(name string) bool {
 	return false
 }
 
-var patchFileMu sync.Mutex
-
-func ProfileUserPatchPath(profile string) string {
-	if profile == "" {
-		profile = "web"
-	}
-	return filepath.Join(profileDirFor(profile), "cordis.patch.yml")
+// ProfileManifest Profile 的 package.json 规范结构
+type ProfileManifest struct {
+	Name         string            `json:"name,omitempty"`
+	Private      bool              `json:"private,omitempty"`
+	Version      string            `json:"version,omitempty"`
+	Dependencies map[string]string `json:"dependencies,omitempty"`
+	Dsh          *DshProfileConfig `json:"dsh,omitempty"`
 }
 
-type CordisPatchRow struct {
-	ID       string                 `yaml:"id,omitempty"`
-	Name     string                 `yaml:"name,omitempty"`
-	Disabled *bool                  `yaml:"disabled,omitempty"`
-	Config   map[string]interface{} `yaml:"config,omitempty"`
-	Insert   []CordisPatchRow       `yaml:"insert,omitempty"`
+type DshProfileConfig struct {
+	Profile *DshProfileInner `json:"profile,omitempty"`
 }
 
-func ReadProfileUserPatch(profile string) ([]CordisPatchRow, error) {
-	patchPath := ProfileUserPatchPath(profile)
-	data, err := os.ReadFile(patchPath)
+type DshProfileInner struct {
+	Bundles []string `json:"bundles,omitempty"`
+}
+
+func profileManifestPath(dir string) string {
+	return filepath.Join(dir, "package.json")
+}
+
+// readProfileManifestFile 读取 Profile 的 package.json
+func readProfileManifestFile(dir string) (*ProfileManifest, error) {
+	data, err := os.ReadFile(profileManifestPath(dir))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return []CordisPatchRow{}, nil
-		}
 		return nil, err
 	}
-	if len(strings.TrimSpace(string(data))) == 0 {
-		return []CordisPatchRow{}, nil
+	var m ProfileManifest
+	if err := json.Unmarshal(data, &m); err != nil {
+		return nil, fmt.Errorf("解析 Profile package.json 失败: %w", err)
 	}
-
-	var rows []CordisPatchRow
-	if err := yaml.Unmarshal(data, &rows); err != nil {
-		return nil, fmt.Errorf("解析 %s 失败: %w", patchPath, err)
+	if m.Dependencies == nil {
+		m.Dependencies = make(map[string]string)
 	}
-	return rows, nil
+	if m.Dsh == nil {
+		m.Dsh = &DshProfileConfig{Profile: &DshProfileInner{Bundles: []string{}}}
+	} else if m.Dsh.Profile == nil {
+		m.Dsh.Profile = &DshProfileInner{Bundles: []string{}}
+	}
+	return &m, nil
 }
 
-func WriteProfileUserPatch(profile string, rows []CordisPatchRow) error {
-	patchPath := ProfileUserPatchPath(profile)
-	if err := os.MkdirAll(filepath.Dir(patchPath), 0755); err != nil {
+// saveProfileManifestFile 原子写回 Profile 的 package.json
+func saveProfileManifestFile(dir string, m *ProfileManifest) error {
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("序列化 package.json 失败: %w", err)
+	}
+	data = append(data, '\n')
+
+	target := profileManifestPath(dir)
+	tmp := target + ".tmp"
+	if err := os.WriteFile(tmp, data, 0644); err != nil {
+		return err
+	}
+	return os.Rename(tmp, target)
+}
+
+// selectBundle 更新 package.json 中的 dsh.profile.bundles
+func selectBundle(dir, name string, enabled bool) error {
+	profileFileMu.Lock()
+	defer profileFileMu.Unlock()
+
+	m, err := readProfileManifestFile(dir)
+	if err != nil {
 		return err
 	}
 
-	if len(rows) == 0 {
-		return os.WriteFile(patchPath, []byte("[]\n"), 0644)
+	previous := m.Dsh.Profile.Bundles
+	var bundles []string
+	if enabled {
+		bundles = append([]string{}, previous...)
+		has := false
+		for _, b := range bundles {
+			if b == name {
+				has = true
+				break
+			}
+		}
+		if !has {
+			bundles = append(bundles, name)
+		}
+	} else {
+		for _, b := range previous {
+			if b != name {
+				bundles = append(bundles, b)
+			}
+		}
 	}
 
-	data, err := yaml.Marshal(rows)
-	if err != nil {
-		return fmt.Errorf("序列化 patch 失败: %w", err)
+	// 比较是否有变动
+	changed := len(previous) != len(bundles)
+	if !changed {
+		for i := range previous {
+			if previous[i] != bundles[i] {
+				changed = true
+				break
+			}
+		}
 	}
-	return os.WriteFile(patchPath, data, 0644)
+
+	if !changed {
+		return nil
+	}
+
+	m.Dsh.Profile.Bundles = bundles
+	return saveProfileManifestFile(dir, m)
 }
 
-// ExtractPluginEntryIDs 解析插件 bundle patch 声明的 loader entry ID
-func ExtractPluginEntryIDs(profile, packageName string) []string {
-	var candidates []string
+func profileWorkspaceYamlPath(dir string) string {
+	return filepath.Join(dir, "pnpm-workspace.yaml")
+}
 
-	pkgJsonPath := filepath.Join(profileDirFor(profile), "node_modules", packageName, "package.json")
-	data, err := os.ReadFile(pkgJsonPath)
+// approveBuilds 在 pnpm-workspace.yaml 中放行依赖构建脚本
+func approveBuilds(dir string, pkgs []string) error {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	profileFileMu.Lock()
+	defer profileFileMu.Unlock()
+
+	yamlPath := profileWorkspaceYamlPath(dir)
+	var root yaml.Node
+	data, err := os.ReadFile(yamlPath)
 	if err == nil {
-		var meta struct {
-			Dsh *struct {
-				Bundle *struct {
-					Patch string `json:"patch"`
-				} `json:"bundle"`
-			} `json:"dsh"`
-		}
-		if jsonErr := json.Unmarshal(data, &meta); jsonErr == nil && meta.Dsh != nil && meta.Dsh.Bundle != nil && meta.Dsh.Bundle.Patch != "" {
-			patchFile := filepath.Join(filepath.Dir(pkgJsonPath), filepath.FromSlash(meta.Dsh.Bundle.Patch))
-			patchData, readErr := os.ReadFile(patchFile)
-			if readErr == nil {
-				var rows []CordisPatchRow
-				if yamlErr := yaml.Unmarshal(patchData, &rows); yamlErr == nil {
-					for _, r := range rows {
-						if len(r.Insert) > 0 {
-							for _, ins := range r.Insert {
-								if ins.ID != "" {
-									candidates = append(candidates, ins.ID)
-								}
-							}
-						} else if r.ID != "" {
-							candidates = append(candidates, r.ID)
-						}
-					}
-				}
-			}
+		_ = yaml.Unmarshal(data, &root)
+	}
+
+	if root.Kind == 0 || len(root.Content) == 0 {
+		root.Kind = yaml.DocumentNode
+		root.Content = []*yaml.Node{
+			{Kind: yaml.MappingNode},
 		}
 	}
 
-	if len(candidates) == 0 {
-		candidates = append(candidates, packageName)
-	}
-	return candidates
-}
+	docMap := root.Content[0]
+	var allowBuildsNode *yaml.Node
 
-// ReadDisabledEntryMap 读取指定 profile 中已被禁用的 entry id 集合
-func ReadDisabledEntryMap(profile string) (map[string]bool, error) {
-	patchFileMu.Lock()
-	defer patchFileMu.Unlock()
-
-	rows, err := ReadProfileUserPatch(profile)
-	if err != nil {
-		return nil, err
-	}
-
-	res := make(map[string]bool)
-	for _, r := range rows {
-		if r.ID != "" && r.Disabled != nil && *r.Disabled {
-			res[r.ID] = true
+	for i := 0; i < len(docMap.Content); i += 2 {
+		if docMap.Content[i].Value == "allowBuilds" {
+			allowBuildsNode = docMap.Content[i+1]
+			break
 		}
 	}
-	return res, nil
-}
 
-// SetPluginDisabled 在 cordis.patch.yml 中配置插件 entry 的启停状态
-func SetPluginDisabled(profile, packageName string, disabled bool) error {
-	if IsProtectedPlugin(packageName) {
-		return fmt.Errorf("核心基础设施插件 %q 受到保护，禁止更改启停状态", packageName)
+	if allowBuildsNode == nil {
+		allowBuildsNode = &yaml.Node{Kind: yaml.MappingNode}
+		docMap.Content = append(docMap.Content,
+			&yaml.Node{Kind: yaml.ScalarNode, Value: "allowBuilds"},
+			allowBuildsNode,
+		)
 	}
 
-	patchFileMu.Lock()
-	defer patchFileMu.Unlock()
-
-	entryIDs := ExtractPluginEntryIDs(profile, packageName)
-	if len(entryIDs) == 0 {
-		entryIDs = []string{packageName}
-	}
-
-	rows, err := ReadProfileUserPatch(profile)
-	if err != nil {
-		return err
-	}
-
-	for _, targetID := range entryIDs {
+	for _, p := range pkgs {
 		found := false
-		var newRows []CordisPatchRow
-
-		for _, r := range rows {
-			if r.ID == targetID {
+		for i := 0; i < len(allowBuildsNode.Content); i += 2 {
+			if allowBuildsNode.Content[i].Value == p {
+				allowBuildsNode.Content[i+1].Value = "true"
+				allowBuildsNode.Content[i+1].Tag = "!!bool"
 				found = true
-				if disabled {
-					val := true
-					r.Disabled = &val
-					newRows = append(newRows, r)
-				} else {
-					if len(r.Config) == 0 && r.Name == "" && len(r.Insert) == 0 {
-						continue
-					}
-					r.Disabled = nil
-					newRows = append(newRows, r)
-				}
-			} else {
-				newRows = append(newRows, r)
+				break
 			}
 		}
-
-		if !found && disabled {
-			val := true
-			newRows = append(newRows, CordisPatchRow{
-				ID:       targetID,
-				Disabled: &val,
-			})
+		if !found {
+			allowBuildsNode.Content = append(allowBuildsNode.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Value: p},
+				&yaml.Node{Kind: yaml.ScalarNode, Value: "true", Tag: "!!bool"},
+			)
 		}
-		rows = newRows
 	}
 
-	if err := WriteProfileUserPatch(profile, rows); err != nil {
+	out, err := yaml.Marshal(&root)
+	if err != nil {
 		return err
 	}
-
-	stateAction := "启用"
-	if disabled {
-		stateAction = "禁用"
-	}
-	LogInfo("[插件] 已通过 user patch %s 插件 %s (Entry IDs: %v)", stateAction, packageName, entryIDs)
-	return nil
+	return os.WriteFile(yamlPath, out, 0644)
 }
 
-// RemovePluginFromProfileUserPatch 从 cordis.patch.yml 中物理移除该插件的所有条目
-func RemovePluginFromProfileUserPatch(profile, packageName string, entryIDs ...string) error {
-	patchFileMu.Lock()
-	defer patchFileMu.Unlock()
+// removeAllowBuilds 清理 pnpm-workspace.yaml 中的构建放行项
+func removeAllowBuilds(dir string, pkgs []string) error {
+	if len(pkgs) == 0 {
+		return nil
+	}
+	profileFileMu.Lock()
+	defer profileFileMu.Unlock()
 
-	rows, err := ReadProfileUserPatch(profile)
+	yamlPath := profileWorkspaceYamlPath(dir)
+	data, err := os.ReadFile(yamlPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil
@@ -256,45 +244,43 @@ func RemovePluginFromProfileUserPatch(profile, packageName string, entryIDs ...s
 		return err
 	}
 
-	idSet := make(map[string]bool)
-	idSet[packageName] = true
-	for _, id := range entryIDs {
-		if id != "" {
-			idSet[id] = true
+	var root yaml.Node
+	if err := yaml.Unmarshal(data, &root); err != nil || len(root.Content) == 0 {
+		return nil
+	}
+
+	docMap := root.Content[0]
+	var allowBuildsNode *yaml.Node
+	for i := 0; i < len(docMap.Content); i += 2 {
+		if docMap.Content[i].Value == "allowBuilds" {
+			allowBuildsNode = docMap.Content[i+1]
+			break
 		}
 	}
 
-	var newRows []CordisPatchRow
-	for _, r := range rows {
-		if idSet[r.ID] || idSet[r.Name] {
-			continue
-		}
-		newRows = append(newRows, r)
+	if allowBuildsNode == nil || allowBuildsNode.Kind != yaml.MappingNode {
+		return nil
 	}
 
-	return WriteProfileUserPatch(profile, newRows)
-}
+	dropSet := make(map[string]bool, len(pkgs))
+	for _, p := range pkgs {
+		dropSet[p] = true
+	}
 
-// ResetAllProfilePatches 清空 Profile 目录与插件白名单缓存，由主程序按模板重新初始化
-func ResetAllProfilePatches() {
-	patchFileMu.Lock()
-	defer patchFileMu.Unlock()
+	var newContent []*yaml.Node
+	for i := 0; i < len(allowBuildsNode.Content); i += 2 {
+		k := allowBuildsNode.Content[i].Value
+		if !dropSet[k] {
+			newContent = append(newContent, allowBuildsNode.Content[i], allowBuildsNode.Content[i+1])
+		}
+	}
+	allowBuildsNode.Content = newContent
 
-	_ = safeRemoveAll(filepath.Join(globalDshHome, "profiles"))
-	_ = safeRemoveAll(globalPluginsDir)
-}
-
-var (
-	blockedBuildsRe = regexp.MustCompile(`(?i)Ignored build scripts:\s*(.+)`)
-	pkgNameRe       = regexp.MustCompile(`^(@?[a-zA-Z0-9][\w.-]*(?:/[@a-zA-Z0-9][\w.-]*)?)@[0-9]`)
-)
-
-func profileWorkspaceYamlPathFor(name string) string {
-	return filepath.Join(profileDirFor(name), "pnpm-workspace.yaml")
-}
-
-func allowBuildsSidecarPath() string {
-	return filepath.Join(globalPluginsDir, "allowbuilds.json")
+	out, err := yaml.Marshal(&root)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(yamlPath, out, 0644)
 }
 
 // parseBlockedPackages 从 pnpm 错误输出中提取被拦截构建脚本的包名
@@ -318,192 +304,13 @@ func parseBlockedPackages(tail string) []string {
 	return pkgs
 }
 
-func readAllowBuildsSidecar() map[string][]string {
-	m := map[string][]string{}
-	data, err := os.ReadFile(allowBuildsSidecarPath())
-	if err != nil {
-		return m
-	}
-	_ = json.Unmarshal(data, &m)
-	if m == nil {
-		m = map[string][]string{}
-	}
-	return m
-}
+// ResetAllProfilePatches 清空 Profile 目录与全局插件目录
+func ResetAllProfilePatches() {
+	profileFileMu.Lock()
+	defer profileFileMu.Unlock()
 
-func writeAllowBuildsSidecar(m map[string][]string) error {
-	if err := os.MkdirAll(filepath.Dir(allowBuildsSidecarPath()), 0755); err != nil {
-		return err
-	}
-	data, err := json.MarshalIndent(m, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(allowBuildsSidecarPath(), data, 0644)
-}
-
-func yamlEntryName(trimmed string) string {
-	if trimmed == "" || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "-") {
-		return ""
-	}
-	name := strings.SplitN(trimmed, ":", 2)[0]
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return ""
-	}
-	return name
-}
-
-// mergeAllowBuildsEntries 合并 allowBuilds 块，保留文件其余内容与注释
-func mergeAllowBuildsEntries(yamlPath string, pkgs []string) error {
-	content := ""
-	if data, err := os.ReadFile(yamlPath); err == nil {
-		content = string(data)
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	lines := strings.Split(content, "\n")
-
-	idx := -1
-	entryLine := map[string]int{}
-	for i, l := range lines {
-		trimmed := strings.TrimSpace(l)
-		if idx < 0 {
-			if trimmed == "allowBuilds:" || strings.HasPrefix(trimmed, "allowBuilds: ") {
-				idx = i
-			}
-			continue
-		}
-		if trimmed == "" || strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t") {
-			if name := yamlEntryName(trimmed); name != "" {
-				entryLine[name] = i
-			}
-			continue
-		}
-		break
-	}
-
-	var missing []string
-	var fix []int
-	for _, p := range pkgs {
-		i, ok := entryLine[p]
-		if !ok {
-			missing = append(missing, p)
-			continue
-		}
-		parts := strings.SplitN(strings.TrimSpace(lines[i]), ":", 2)
-		val := ""
-		if len(parts) >= 2 {
-			val = strings.TrimSpace(parts[1])
-		}
-		if val != "true" && val != "false" {
-			fix = append(fix, i)
-		}
-	}
-	if len(missing) == 0 && len(fix) == 0 {
-		return nil
-	}
-	sort.Strings(missing)
-
-	if idx < 0 {
-		content = strings.TrimRight(content, "\n") + "\n\nallowBuilds:\n"
-		for _, p := range missing {
-			content += "  " + p + ": true\n"
-		}
-	} else {
-		for _, i := range fix {
-			name := yamlEntryName(strings.TrimSpace(lines[i]))
-			lines[i] = "  " + name + ": true"
-		}
-		var out []string
-		out = append(out, lines[:idx+1]...)
-		for _, p := range missing {
-			out = append(out, "  "+p+": true")
-		}
-		out = append(out, lines[idx+1:]...)
-		content = strings.Join(out, "\n")
-	}
-	if err := os.MkdirAll(filepath.Dir(yamlPath), 0755); err != nil {
-		return err
-	}
-	return os.WriteFile(yamlPath, []byte(content), 0644)
-}
-
-// removeAllowBuildsEntries 删除指定包的 allowBuilds 条目
-func removeAllowBuildsEntries(yamlPath string, pkgs []string) error {
-	data, err := os.ReadFile(yamlPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	drop := map[string]bool{}
-	for _, p := range pkgs {
-		drop[p] = true
-	}
-	lines := strings.Split(string(data), "\n")
-	out := make([]string, 0, len(lines))
-	for _, l := range lines {
-		trimmed := strings.TrimSpace(l)
-		if (strings.HasPrefix(l, " ") || strings.HasPrefix(l, "\t")) &&
-			trimmed != "" && !strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "-") {
-			parts := strings.SplitN(trimmed, ":", 2)
-			name := strings.TrimSpace(parts[0])
-			if drop[name] && (len(parts) < 2 || strings.TrimSpace(parts[1]) != "false") {
-				continue
-			}
-		}
-		out = append(out, l)
-	}
-	return os.WriteFile(yamlPath, []byte(strings.Join(out, "\n")), 0644)
-}
-
-// ensureAllowBuildsFor 写入 allowBuilds 并记录归属映射
-func ensureAllowBuildsFor(profile, pluginKey string, pkgs []string) error {
-	if err := mergeAllowBuildsEntries(profileWorkspaceYamlPathFor(profile), pkgs); err != nil {
-		return err
-	}
-	sidecar := readAllowBuildsSidecar()
-	for _, p := range pkgs {
-		found := false
-		for _, k := range sidecar[p] {
-			if k == pluginKey {
-				found = true
-				break
-			}
-		}
-		if !found {
-			sidecar[p] = append(sidecar[p], pluginKey)
-		}
-	}
-	return writeAllowBuildsSidecar(sidecar)
-}
-
-// cleanupAllowBuildsFor 卸载后移除归属记录并清理孤儿条目
-func cleanupAllowBuildsFor(profile, pluginKey string) error {
-	sidecar := readAllowBuildsSidecar()
-	var orphan []string
-	for pkg, keys := range sidecar {
-		var keep []string
-		for _, k := range keys {
-			if k != pluginKey {
-				keep = append(keep, k)
-			}
-		}
-		if len(keep) == 0 {
-			delete(sidecar, pkg)
-			orphan = append(orphan, pkg)
-		} else {
-			sidecar[pkg] = keep
-		}
-	}
-	if len(orphan) > 0 {
-		if err := removeAllowBuildsEntries(profileWorkspaceYamlPathFor(profile), orphan); err != nil {
-			return fmt.Errorf("清理 allowBuilds 失败: %s", err)
-		}
-	}
-	return writeAllowBuildsSidecar(sidecar)
+	_ = safeRemoveAll(filepath.Join(globalDshHome, "profiles"))
+	_ = safeRemoveAll(globalPluginsDir)
 }
 
 // PnpmFailureCode pnpm 故障分类类型
@@ -517,12 +324,10 @@ const (
 	PnpmFailureIgnoredBuilds    PnpmFailureCode = "ignored-builds"
 	PnpmFailureGitDepPrepare    PnpmFailureCode = "git-prepare-not-allowed"
 	PnpmFailureFetch404         PnpmFailureCode = "fetch-404"
-	PnpmFailureAddingToRoot     PnpmFailureCode = "adding-to-root"
 	PnpmFailureUnexpectedStore  PnpmFailureCode = "unexpected-store"
 	PnpmFailureUnknown          PnpmFailureCode = "unknown"
 )
 
-// PnpmFailureInfo 识别出的故障详情
 type PnpmFailureInfo struct {
 	Code        PnpmFailureCode
 	Recoverable bool
@@ -537,16 +342,15 @@ var (
 	semverPattern  = regexp.MustCompile(`^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$`)
 )
 
-// ClassifyPnpmFailure 智能分类 pnpm 执行失败原因
+// ClassifyPnpmFailure 分类 pnpm 失败原因
 func ClassifyPnpmFailure(output string) PnpmFailureInfo {
 	if strings.Contains(output, "ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF") {
 		return PnpmFailureInfo{
 			Code:        PnpmFailureHoistPatternDiff,
 			Recoverable: true,
-			Message:     "node_modules 是旧版 pnpm 创建的，存在依赖结构差异，已自动重建后重试",
+			Message:     "node_modules 存在依赖结构差异，已自动重建后重试",
 		}
 	}
-
 	if strings.Contains(output, "ERR_PNPM_UNEXPECTED_STORE") {
 		return PnpmFailureInfo{
 			Code:        PnpmFailureUnexpectedStore,
@@ -554,16 +358,14 @@ func ClassifyPnpmFailure(output string) PnpmFailureInfo {
 			Message:     "依赖存储位置变更，已自动清理缓存并重试",
 		}
 	}
-
 	if strings.Contains(output, "ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION") ||
 		strings.Contains(output, "ERR_PNPM_NO_MATURE_MATCHING_VERSION") {
 		return PnpmFailureInfo{
 			Code:        PnpmFailureReleaseAge,
 			Recoverable: true,
-			Message:     "检测到刚发布的新版本受 pnpm 安全期限制，已自动放行并重试",
+			Message:     "新版本受 pnpm 安全发布期限制，已自动放行并重试",
 		}
 	}
-
 	if reFetchTimeout.MatchString(output) {
 		return PnpmFailureInfo{
 			Code:        PnpmFailureFetchTimeout,
@@ -571,23 +373,20 @@ func ClassifyPnpmFailure(output string) PnpmFailureInfo {
 			Message:     "下载耗时超出默认限制，已自动延长超时时间并重试",
 		}
 	}
-
 	if strings.Contains(output, "ERR_PNPM_IGNORED_BUILDS") {
 		return PnpmFailureInfo{
 			Code:        PnpmFailureIgnoredBuilds,
 			Recoverable: true,
-			Message:     "依赖包含构建脚本，已被 pnpm 默认拦截，已自动配置放行并重试",
+			Message:     "依赖包含构建脚本，已自动放行并重试",
 		}
 	}
-
 	if strings.Contains(output, "ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED") {
 		return PnpmFailureInfo{
 			Code:        PnpmFailureGitDepPrepare,
 			Recoverable: true,
-			Message:     "Git 插件包含构建脚本，已自动配置放行并重试",
+			Message:     "Git 插件包含构建脚本，已自动放行并重试",
 		}
 	}
-
 	if strings.Contains(output, "ERR_PNPM_FETCH_404") {
 		detailPkg := ""
 		if m := re404Pkg.FindStringSubmatch(output); len(m) > 1 {
@@ -596,7 +395,7 @@ func ClassifyPnpmFailure(output string) PnpmFailureInfo {
 		}
 		msg := "指定的插件包在 npm 镜像源上不存在 (404)"
 		if detailPkg != "" {
-			msg = fmt.Sprintf("依赖包「%s」在镜像源上不存在 (404)，可能未发布或存在历史残留", detailPkg)
+			msg = fmt.Sprintf("依赖包「%s」在镜像源上不存在 (404)", detailPkg)
 		}
 		return PnpmFailureInfo{
 			Code:        PnpmFailureFetch404,
@@ -605,7 +404,6 @@ func ClassifyPnpmFailure(output string) PnpmFailureInfo {
 			DetailPkg:   detailPkg,
 		}
 	}
-
 	if reTransientNet.MatchString(output) {
 		return PnpmFailureInfo{
 			Code:        PnpmFailureTransientNetwork,
@@ -613,7 +411,6 @@ func ClassifyPnpmFailure(output string) PnpmFailureInfo {
 			Message:     "网络连接瞬态抖动，已自动重试",
 		}
 	}
-
 	return PnpmFailureInfo{
 		Code:        PnpmFailureUnknown,
 		Recoverable: false,
@@ -621,14 +418,13 @@ func ClassifyPnpmFailure(output string) PnpmFailureInfo {
 	}
 }
 
-// FormatPnpmFailureMessage 将底层复杂的报错提炼为精炼的中文反馈
+// FormatPnpmFailureMessage 格式化输出友好的中文错误
 func FormatPnpmFailureMessage(output string) string {
 	info := ClassifyPnpmFailure(output)
 	if info.Code == PnpmFailureFetch404 {
 		return info.Message
 	}
 
-	// 提取最具参考价值的单行错误
 	lines := strings.Split(output, "\n")
 	var meaningfulLines []string
 	for _, l := range lines {
@@ -648,7 +444,6 @@ func FormatPnpmFailureMessage(output string) string {
 		return fmt.Sprintf("%s（%s）", info.Message, meaningfulLines[0])
 	}
 
-	// 兜底截取最后一段有效文字
 	for i := len(lines) - 1; i >= 0; i-- {
 		t := strings.TrimSpace(lines[i])
 		if t != "" && !strings.HasPrefix(t, "at ") {
@@ -661,7 +456,6 @@ func FormatPnpmFailureMessage(output string) string {
 	return info.Message
 }
 
-// parsedSemver 结构化 Semver
 type parsedSemver struct {
 	Major int
 	Minor int
@@ -690,7 +484,7 @@ func parseSemver(v string) (parsedSemver, bool) {
 	return parsedSemver{Major: maj, Minor: min, Patch: pat, Pre: pre}, true
 }
 
-// CompareSemver 严格语义化版本比较: v1 > v2 返回 1; v1 < v2 返回 -1; 相等返回 0
+// CompareSemver 比较语义化版本: v1 > v2 返回 1; v1 < v2 返回 -1; 相等返回 0
 func CompareSemver(v1, v2 string) int {
 	p1, ok1 := parseSemver(v1)
 	p2, ok2 := parseSemver(v2)
@@ -720,7 +514,6 @@ func CompareSemver(v1, v2 string) int {
 		return -1
 	}
 
-	// 正式版本优于预览版
 	if len(p1.Pre) == 0 && len(p2.Pre) > 0 {
 		return 1
 	}
@@ -731,7 +524,6 @@ func CompareSemver(v1, v2 string) int {
 		return 0
 	}
 
-	// 逐段比较 pre-release
 	maxLen := len(p1.Pre)
 	if len(p2.Pre) > maxLen {
 		maxLen = len(p2.Pre)
@@ -766,4 +558,3 @@ func CompareSemver(v1, v2 string) int {
 	}
 	return 0
 }
-

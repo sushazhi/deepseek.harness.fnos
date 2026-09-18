@@ -276,7 +276,7 @@ function handleCreateSnapshot() {
     compression_level: compressionLevel.value
   }).then(res => {
     if (res.success) {
-      message.success('快照创建成功')
+      message.info(res.message || '快照创建任务已启动...')
     } else {
       message.error(res.message || '创建快照失败')
     }
@@ -315,7 +315,7 @@ async function handleRestore(id: string, name?: string) {
   try {
     const res = await snapshotStore.restoreSnapshot(id, name)
     if (res.success) {
-      message.success('快照还原成功')
+      message.info(res.message || '快照还原任务已启动...')
     } else {
       message.error(res.message || '还原快照失败')
     }

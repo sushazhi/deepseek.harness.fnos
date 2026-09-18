@@ -31,6 +31,22 @@ export const useSnapshotStore = defineStore('snapshot', () => {
   function updateProgress(data: SnapshotProgressTask) {
     if (!data) return
 
+    // 任务失败处理
+    if (data.error) {
+      progressAction.value = (data.action as 'create' | 'restore') || progressAction.value
+      progressStage.value = data.action === 'restore' ? '快照还原失败' : '快照创建失败'
+      progressMessage.value = data.error
+      progressPercent.value = 0
+      actionLoading.value = false
+      if (!hideTimer) {
+        hideTimer = setTimeout(() => {
+          progressVisible.value = false
+          hideTimer = null
+        }, 3000)
+      }
+      return
+    }
+
     if (data.active === false) {
       if (progressVisible.value) {
         if (!hideTimer) {
@@ -72,7 +88,7 @@ export const useSnapshotStore = defineStore('snapshot', () => {
           progressVisible.value = false
           actionLoading.value = false
           hideTimer = null
-        }, 1000)
+        }, 1500)
       }
     }
   }
@@ -83,8 +99,8 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     totalSizeBytes.value = summary.total_size_bytes || 0
     loading.value = false
 
-    // 同步后端随附的任务进度
-    if (summary.current_task) {
+    // 仅在本地无活跃进度、且服务端存在未完成任务时恢复显示
+    if (summary.current_task?.active && !progressVisible.value && summary.current_task.percent < 100) {
       updateProgress(summary.current_task)
     }
   }
@@ -107,24 +123,12 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     progressVisible.value = true
     progressPercent.value = 0
     progressAction.value = 'create'
-    progressStage.value = `正在准备打包快照「${params.name}」`
-    progressMessage.value = '校验环境与数据源'
+    progressStage.value = `正在启动快照创建任务「${params.name}」`
+    progressMessage.value = '准备执行环境'
 
     try {
       const res = await snapshotApi.create(params)
-      if (res.success) {
-        progressPercent.value = 100
-        progressStage.value = `快照「${params.name}」创建完成`
-        progressMessage.value = ''
-        await fetchSnapshots()
-        if (!hideTimer) {
-          hideTimer = setTimeout(() => {
-            progressVisible.value = false
-            actionLoading.value = false
-            hideTimer = null
-          }, 1500)
-        }
-      } else {
+      if (!res.success) {
         progressVisible.value = false
         actionLoading.value = false
       }
@@ -141,24 +145,12 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     progressVisible.value = true
     progressPercent.value = 5
     progressAction.value = 'restore'
-    progressStage.value = `正在还原快照「${name || id}」`
-    progressMessage.value = '停止服务并校验数据包'
+    progressStage.value = `正在启动快照还原任务「${name || id}」`
+    progressMessage.value = '校验并准备还原'
 
     try {
       const res = await snapshotApi.restore(id)
-      if (res.success) {
-        progressPercent.value = 100
-        progressStage.value = '快照还原完成'
-        progressMessage.value = '服务已就绪'
-        await fetchSnapshots()
-        if (!hideTimer) {
-          hideTimer = setTimeout(() => {
-            progressVisible.value = false
-            actionLoading.value = false
-            hideTimer = null
-          }, 1500)
-        }
-      } else {
+      if (!res.success) {
         progressVisible.value = false
         actionLoading.value = false
       }
@@ -173,11 +165,7 @@ export const useSnapshotStore = defineStore('snapshot', () => {
   async function deleteSnapshot(id: string) {
     actionLoading.value = true
     try {
-      const res = await snapshotApi.delete(id)
-      if (res.success) {
-        await fetchSnapshots()
-      }
-      return res
+      return await snapshotApi.delete(id)
     } finally {
       actionLoading.value = false
     }

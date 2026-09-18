@@ -623,21 +623,51 @@ func handleCreateSnapshot(c *gin.Context) {
 	var params CreateSnapshotParams
 	_ = c.ShouldBindJSON(&params)
 
-	meta, err := CreateSnapshot(params)
-	if err != nil {
-		Fail(c, http.StatusBadRequest, "创建快照失败: "+err.Error())
+	cur := state.Status()
+	if cur == StatusBuilding {
+		Fail(c, http.StatusConflict, "服务正在部署更新中，请稍候再试")
 		return
 	}
-	OKMsg(c, "快照创建成功", meta)
+	if cur == StatusSnapshotting {
+		Fail(c, http.StatusConflict, "已有快照任务正在执行中，请勿重复操作")
+		return
+	}
+	if cur == StatusStarting {
+		Fail(c, http.StatusConflict, "服务正在启动中，请等待启动完成后再创建快照")
+		return
+	}
+
+	targetName := strings.TrimSpace(params.Name)
+	if targetName == "" {
+		targetName = "手动快照_" + time.Now().Format("0102_1504")
+	}
+	params.Name = targetName
+
+	if err := CheckResourceForSnapshot(); err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	go func() {
+		_, _ = CreateSnapshot(params)
+	}()
+
+	OKMsg(c, "快照创建任务已启动", gin.H{"name": params.Name})
 }
 
 func handleRestoreSnapshot(c *gin.Context) {
 	id := c.Param("id")
-	if err := RestoreSnapshot(id); err != nil {
-		Fail(c, http.StatusInternalServerError, "还原快照失败: "+err.Error())
+	meta, err := ValidateSnapshotForRestore(id)
+	if err != nil {
+		Fail(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	OKMsg(c, "快照已成功还原，服务正在重新拉起", nil)
+
+	go func() {
+		_ = RestoreSnapshot(id)
+	}()
+
+	OKMsg(c, "快照还原任务已启动", gin.H{"id": id, "name": meta.Name})
 }
 
 func handleDeleteSnapshot(c *gin.Context) {

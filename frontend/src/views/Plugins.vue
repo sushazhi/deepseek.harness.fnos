@@ -1,5 +1,6 @@
 <template>
-  <div class="w-full h-[calc(100dvh-82px)] sm:h-[calc(100dvh-48px)] flex flex-col gap-3 sm:gap-4 min-h-0 overflow-hidden select-none">
+  <div
+    class="w-full h-[calc(100dvh-82px)] sm:h-[calc(100dvh-48px)] flex flex-col gap-3 sm:gap-4 min-h-0 overflow-hidden select-none">
     <!-- 页头标题 -->
     <div
       class="sticky -top-[14px] sm:-top-6 z-20 -mt-3.5 sm:-mt-4 pt-5 sm:pt-7 pb-2 sm:pb-2.5 bg-[#f5f7fa]/90 dark:bg-[#12141a]/90 backdrop-blur-md flex items-center justify-between gap-3 w-full min-w-0 shrink-0 transition-all duration-200">
@@ -28,37 +29,6 @@
       </n-alert>
     </div>
 
-    <!-- 市场插件推荐引导卡片 -->
-    <div v-if="!hasDshMarketInstalled" v-auto-animate class="w-full min-w-0 shrink-0">
-      <div
-        class="p-3 sm:p-4 rounded-2xl bg-gradient-to-r from-blue-50/80 via-indigo-50/50 to-purple-50/80 dark:from-blue-950/30 dark:via-indigo-950/20 dark:to-purple-950/30 border border-blue-100/80 dark:border-blue-900/30 shadow-xs flex items-center justify-between gap-2.5 sm:gap-3.5 min-w-0">
-        <div class="flex items-center gap-2.5 sm:gap-3 min-w-0 flex-1">
-          <div
-            class="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-fnos-blue/10 dark:bg-fnos-blue/20 text-fnos-blue dark:text-blue-400 flex items-center justify-center shrink-0">
-            <n-icon :size="18">
-              <BuildingStore />
-            </n-icon>
-          </div>
-          <div class="min-w-0 flex-1 space-y-0.5">
-            <h3 class="text-xs sm:text-sm font-bold text-slate-800 dark:text-slate-100 truncate">推荐安装「dshmarket」插件市场
-            </h3>
-            <p
-              class="text-[11px] sm:text-xs text-slate-500 dark:text-slate-400 leading-normal line-clamp-1 sm:line-clamp-none">
-              第三方插件市场，安装后可在DSH设置中直接可视化浏览、搜索与管理社区插件及主题。
-            </p>
-          </div>
-        </div>
-        <n-button type="primary" size="small" secondary @click="handleQuickInstallMarket" :disabled="busy"
-          class="shrink-0 rounded-lg !h-7 sm:!h-7.5 !px-2.5 sm:!px-3 text-xs font-medium transition-transform duration-150 active:scale-95">
-          <template #icon>
-            <n-icon :size="13">
-              <Download />
-            </n-icon>
-          </template>
-          <span>安装</span>
-        </n-button>
-      </div>
-    </div>
 
     <!-- 状态分类标签与安装操作 -->
     <div class="flex items-center justify-between gap-2.5 w-full min-w-0 shrink-0">
@@ -69,7 +39,7 @@
             全部 <span class="text-[11px] opacity-75 font-mono ml-0.5">({{ plugins.length }})</span>
           </n-radio-button>
           <n-radio-button value="live" class="!h-8 !leading-8 text-xs">
-            运行中 <span class="text-[11px] opacity-75 font-mono ml-0.5">({{ liveCount }})</span>
+            已启用 <span class="text-[11px] opacity-75 font-mono ml-0.5">({{ liveCount }})</span>
           </n-radio-button>
           <n-radio-button value="disabled" class="!h-8 !leading-8 text-xs">
             已停用 <span class="text-[11px] opacity-75 font-mono ml-0.5">({{ disabledCount }})</span>
@@ -234,13 +204,12 @@
               </div>
 
               <!-- 插件操作区 -->
-              <div
+              <div v-if="!p.isProtected"
                 class="flex items-center justify-between sm:justify-end gap-2.5 shrink-0 pt-2 sm:pt-0 border-t sm:border-t-0 border-slate-50 dark:border-white/[0.04] w-full sm:w-auto">
                 <!-- 卸载与更新按钮组 -->
                 <div class="flex items-center gap-2 shrink-0">
                   <!-- 卸载按钮 -->
-                  <n-button size="small" secondary type="error" :disabled="busy || p.isProtected"
-                    @click="promptUninstallPlugin(p.name)"
+                  <n-button size="small" secondary type="error" :disabled="busy" @click="promptUninstallPlugin(p.name)"
                     class="!h-7 !px-2.5 rounded-lg text-xs font-medium transition-transform duration-150 active:scale-95 shrink-0">
                     <template #icon>
                       <n-icon>
@@ -268,18 +237,13 @@
                 </div>
 
                 <!-- 启停开关 -->
-                <n-tooltip trigger="hover" :disabled="!p.isProtected || isTouch">
-                  <template #trigger>
-                    <div class="flex items-center gap-2 shrink-0">
-                      <span class="text-xs text-slate-400 dark:text-slate-500 sm:hidden">
-                        {{ p.state === 'live' ? '已启用' : '已停用' }}
-                      </span>
-                      <n-switch size="medium" :value="p.state === 'live'" :disabled="busy || p.isProtected"
-                        @update:value="(val) => handleToggle(p.name, val)" />
-                    </div>
-                  </template>
-                  核心基础设施插件受到保护，不可停用
-                </n-tooltip>
+                <div class="flex items-center gap-2 shrink-0">
+                  <span class="text-xs text-slate-400 dark:text-slate-500 sm:hidden">
+                    {{ p.state === 'live' ? '已启用' : '已停用' }}
+                  </span>
+                  <n-switch size="medium" :value="p.state === 'live'" :disabled="busy"
+                    @update:value="(val) => handleToggle(p.name, val)" />
+                </div>
               </div>
             </div>
           </div>
@@ -307,7 +271,7 @@
             <span class="truncate min-w-0 flex-1">支持: npm 包、@scoped 包、github:user/repo</span>
             <a href="javascript:void(0)" @click="openMarketplace"
               class="text-fnos-blue dark:text-blue-400 hover:underline inline-flex items-center gap-0.5 shrink-0 select-none font-medium cursor-pointer">
-              <span>插件精选列表</span>
+              <span>插件市场</span>
               <n-icon :size="12">
                 <ExternalLink />
               </n-icon>
@@ -368,9 +332,7 @@ import {
   Terminal2,
   Puzzle,
   ExternalLink,
-  Search,
-  BuildingStore,
-  Download
+  Search
 } from '@vicons/tabler'
 import { usePluginStore } from '../stores/plugin'
 import { useSystemStore } from '../stores/system'
@@ -416,15 +378,6 @@ const {
 
 const isRestarting = computed(() => activeAction.value === 'restart')
 
-// 检查是否已安装 dshmarket
-const hasDshMarketInstalled = computed(() => {
-  return plugins.value.some(p => p.name === 'dshmarket' || p.name === 'dsh-market')
-})
-
-const handleQuickInstallMarket = () => {
-  pluginStore.fillDshMarketCommand()
-  showInstallModal.value = true
-}
 
 const getStateTagType = (state: PluginState): 'success' | 'default' | 'warning' => {
   switch (state) {
@@ -436,7 +389,7 @@ const getStateTagType = (state: PluginState): 'success' | 'default' | 'warning' 
 
 const getStateTagLabel = (state: PluginState): string => {
   switch (state) {
-    case 'live': return '运行中'
+    case 'live': return '已启用'
     case 'disabled': return '已停用'
     case 'inert': return '普通依赖'
   }

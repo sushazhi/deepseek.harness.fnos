@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -21,7 +20,6 @@ import (
 const (
 	pluginRemoveTimeout  = 60 * time.Second
 	pluginInstallTimeout = 180 * time.Second
-	pluginSyncTimeout    = 30 * time.Second
 )
 
 // pluginEnv 注入网络超时与重试收敛参数，防止 npm/pnpm 无限挂起
@@ -51,8 +49,6 @@ const (
 	pluginAdd     pluginVerb = "add"
 	pluginRemove  pluginVerb = "remove"
 	pluginUpdate  pluginVerb = "update"
-	pluginList    pluginVerb = "list"
-	pluginWhy     pluginVerb = "why"
 	pluginInstall pluginVerb = "install"
 )
 
@@ -61,12 +57,10 @@ var pluginVerbAliases = map[string]pluginVerb{
 	"install": pluginInstall, "i": pluginInstall,
 	"remove": pluginRemove, "rm": pluginRemove, "uninstall": pluginRemove, "un": pluginRemove,
 	"update": pluginUpdate, "up": pluginUpdate, "upgrade": pluginUpdate,
-	"list": pluginList, "ls": pluginList,
-	"why": pluginWhy,
 }
 
 var pluginNeedSpecs = map[pluginVerb]bool{
-	pluginAdd: true, pluginRemove: true, pluginUpdate: true, pluginWhy: true,
+	pluginAdd: true, pluginRemove: true, pluginUpdate: true,
 }
 
 var (
@@ -146,10 +140,9 @@ func validatePluginSpec(spec string) error {
 }
 
 type pluginCommand struct {
-	Verb     pluginVerb
-	Profile  string
-	Specs    []string
-	AllowKey string
+	Verb    pluginVerb
+	Profile string
+	Specs   []string
 }
 
 func parsePluginCommand(input string) (*pluginCommand, error) {
@@ -219,12 +212,10 @@ func profileHasWorkspace() bool {
 
 func (c *pluginCommand) dshArgs() []string {
 	args := []string{"plugin", "--profile", c.Profile, string(c.Verb)}
-	if c.Verb != pluginList && c.Verb != pluginWhy {
-		if c.Verb != pluginInstall && profileHasWorkspace() {
-			args = append(args, "-w")
-		}
-		args = append(args, "--config.minimumReleaseAge=0")
+	if c.Verb != pluginInstall && profileHasWorkspace() {
+		args = append(args, "-w")
 	}
+	args = append(args, "--config.minimumReleaseAge=0")
 	args = append(args, c.Specs...)
 	return args
 }
@@ -237,13 +228,12 @@ func pluginProfileDir() string {
 	return filepath.Join(globalDshHome, "profiles", "web")
 }
 
-// pluginItem 前端呈现的元数据插件模型
+// pluginItem 插件列表展示模型
 type pluginItem struct {
 	Name        string   `json:"name"`
 	Version     string   `json:"version,omitempty"`
 	Spec        string   `json:"spec,omitempty"`
 	State       string   `json:"state"` // "live", "disabled", "inert"
-	Layer       bool     `json:"layer"` // 兼容字段: State == "live"
 	EntryIDs    []string `json:"entryIds,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Author      string   `json:"author,omitempty"`
@@ -260,53 +250,17 @@ type pluginListPayload struct {
 	Bundles []string     `json:"bundles"`
 }
 
-type profileManifest struct {
-	Name         string            `json:"name"`
-	Private      bool              `json:"private"`
-	Version      string            `json:"version,omitempty"`
-	Dependencies map[string]string `json:"dependencies,omitempty"`
-	Dsh          *struct {
-		Profile *struct {
-			Bundles  []string `json:"bundles"`
-			Disabled []string `json:"disabled"` // 兼容旧版 disabled 字段
-		} `json:"profile"`
-	} `json:"dsh,omitempty"`
-}
-
-func profileManifestPath() string {
-	return filepath.Join(pluginProfileDir(), "package.json")
-}
-
 // checkDuplicatePlugin 检查插件是否已经安装
 func checkDuplicatePlugin(spec string) error {
 	norm := normalizePluginKey(spec)
-	deps, _, _, err := readProfileManifest()
+	m, err := readProfileManifestFile(pluginProfileDir())
 	if err != nil {
 		return nil
 	}
-	if currentSpec, exists := deps[norm]; exists {
+	if currentSpec, exists := m.Dependencies[norm]; exists {
 		return fmt.Errorf("插件「%s」已安装 (当前版本: %s)", norm, currentSpec)
 	}
 	return nil
-}
-
-func readProfileManifest() (deps map[string]string, bundles []string, legacyDisabled []string, err error) {
-	data, err := os.ReadFile(profileManifestPath())
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	var m profileManifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil, nil, nil, err
-	}
-	if m.Dependencies == nil {
-		m.Dependencies = map[string]string{}
-	}
-	if m.Dsh != nil && m.Dsh.Profile != nil {
-		bundles = m.Dsh.Profile.Bundles
-		legacyDisabled = m.Dsh.Profile.Disabled
-	}
-	return m.Dependencies, bundles, legacyDisabled, nil
 }
 
 type rawPackageMeta struct {
@@ -321,7 +275,6 @@ type rawPackageMeta struct {
 		Bundle *struct {
 			Patch string `json:"patch"`
 		} `json:"bundle"`
-		Client any `json:"client"`
 	} `json:"dsh"`
 }
 
@@ -358,8 +311,36 @@ func parseAuthorString(author any) string {
 	return ""
 }
 
+// profileSnapshot 配置文件快照
+type profileSnapshot struct {
+	pkgJSON  []byte
+	pnpmLock []byte
+}
+
+func takeProfileSnapshot(dir string) *profileSnapshot {
+	snap := &profileSnapshot{}
+	snap.pkgJSON, _ = os.ReadFile(filepath.Join(dir, "package.json"))
+	snap.pnpmLock, _ = os.ReadFile(filepath.Join(dir, "pnpm-lock.yaml"))
+	return snap
+}
+
+func restoreProfileSnapshot(dir string, snap *profileSnapshot) {
+	if snap == nil {
+		return
+	}
+	if len(snap.pkgJSON) > 0 {
+		_ = os.WriteFile(filepath.Join(dir, "package.json"), snap.pkgJSON, 0644)
+	}
+	if len(snap.pnpmLock) > 0 {
+		_ = os.WriteFile(filepath.Join(dir, "pnpm-lock.yaml"), snap.pnpmLock, 0644)
+	}
+}
+
+
+
 func handleListPlugins(c *gin.Context) {
-	deps, bundles, legacyDisabled, err := readProfileManifest()
+	dir := pluginProfileDir()
+	m, err := readProfileManifestFile(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
 			OK(c, pluginListPayload{Profile: "web", Plugins: []pluginItem{}, Bundles: []string{}})
@@ -369,44 +350,21 @@ func handleListPlugins(c *gin.Context) {
 		return
 	}
 
-	bundleSet := make(map[string]bool, len(bundles))
-	for _, b := range bundles {
+	bundleSet := make(map[string]bool, len(m.Dsh.Profile.Bundles))
+	for _, b := range m.Dsh.Profile.Bundles {
 		bundleSet[b] = true
 	}
 
-	// 官方 Cordis User Patch 中的禁用状态映射
-	disabledMap, _ := ReadDisabledEntryMap("web")
-	if disabledMap == nil {
-		disabledMap = make(map[string]bool)
+	namesSet := make(map[string]bool, len(m.Dependencies)+len(m.Dsh.Profile.Bundles))
+	for name := range m.Dependencies {
+		namesSet[name] = true
+	}
+	for _, b := range m.Dsh.Profile.Bundles {
+		namesSet[b] = true
 	}
 
-	// 自动迁移：检测旧版 package.json 中的 disabled 状态并同步写入官方 cordis.patch.yml
-	if len(legacyDisabled) > 0 {
-		for _, disName := range legacyDisabled {
-			disName = strings.TrimSpace(disName)
-			if disName == "" {
-				continue
-			}
-			isAlreadyDisabled := false
-			entryIDs := ExtractPluginEntryIDs("web", disName)
-			for _, eid := range entryIDs {
-				if disabledMap[eid] {
-					isAlreadyDisabled = true
-					break
-				}
-			}
-			if !isAlreadyDisabled {
-				_ = SetPluginDisabled("web", disName, true)
-				for _, eid := range entryIDs {
-					disabledMap[eid] = true
-				}
-				LogInfo("[插件] 检测到旧版 package.json 中 disabled 配置，已迁移至 cordis.patch.yml: %s", disName)
-			}
-		}
-	}
-
-	names := make([]string, 0, len(deps))
-	for name := range deps {
+	names := make([]string, 0, len(namesSet))
+	for name := range namesSet {
 		names = append(names, name)
 	}
 	sort.Strings(names)
@@ -414,33 +372,24 @@ func handleListPlugins(c *gin.Context) {
 	plugins := make([]pluginItem, 0, len(names))
 	for _, name := range names {
 		meta, _ := installedPluginMetadata(name)
-		entryIDs := ExtractPluginEntryIDs("web", name)
 		hasBundle := meta.Dsh != nil && meta.Dsh.Bundle != nil && meta.Dsh.Bundle.Patch != ""
 		isProtected := IsProtectedPlugin(name)
 
-		// 判定插件当前状态
-		stateVal := "live"
-		isDisabled := false
-		for _, eid := range entryIDs {
-			if disabledMap[eid] {
-				isDisabled = true
-				break
+		stateVal := "inert"
+		if hasBundle {
+			if bundleSet[name] {
+				stateVal = "live"
+			} else {
+				stateVal = "disabled"
 			}
-		}
-		if isDisabled {
-			stateVal = "disabled"
-		} else if !hasBundle && !bundleSet[name] {
-			// 未声明 dsh.bundle，作为普通依赖存在
-			stateVal = "inert"
 		}
 
 		plugins = append(plugins, pluginItem{
 			Name:        name,
 			Version:     meta.Version,
-			Spec:        deps[name],
+			Spec:        m.Dependencies[name],
 			State:       stateVal,
-			Layer:       (stateVal == "live"),
-			EntryIDs:    entryIDs,
+			EntryIDs:    []string{name},
 			Description: meta.Description,
 			Author:      parseAuthorString(meta.Author),
 			Homepage:    meta.Homepage,
@@ -454,7 +403,7 @@ func handleListPlugins(c *gin.Context) {
 	OK(c, pluginListPayload{
 		Profile: "web",
 		Plugins: plugins,
-		Bundles: bundles,
+		Bundles: m.Dsh.Profile.Bundles,
 	})
 }
 
@@ -581,7 +530,6 @@ func pluginFailMessage(err error, tail string) string {
 	return msg
 }
 
-
 var (
 	activePluginCmdMu    sync.Mutex
 	activePluginCmd      *exec.Cmd
@@ -666,7 +614,7 @@ func runPluginSubprocess(cmdArgs []string, timeout time.Duration) error {
 			killProcessTree(pid)
 		}
 		_ = <-done
-		return fmt.Errorf("插件操作超时（超过 %v），网络请求或依赖解析未能按时完成，已自动终止", timeout)
+		return fmt.Errorf("插件操作超时（超过 %v），已自动终止", timeout)
 	case err := <-done:
 		if err != nil {
 			activePluginCmdMu.Lock()
@@ -685,116 +633,16 @@ func runPluginSubprocess(cmdArgs []string, timeout time.Duration) error {
 	}
 }
 
-func runPluginSync(cmdArgs []string, timeout time.Duration) (string, error) {
-	outWriter := NewLogWriterInfo()
-	errWriter := NewLogWriterWarn()
-	defer outWriter.Flush()
-	defer errWriter.Flush()
-
-	bin, args := dshCliCmd(cmdArgs...)
-	cmd := exec.Command(bin, args...)
-	cmd.Dir = runtimeDir
-	cmd.Env = pluginEnv()
-	setProcessGroup(cmd)
-	var buf bytes.Buffer
-	cmd.Stdout = io.MultiWriter(outWriter, &buf)
-	cmd.Stderr = io.MultiWriter(errWriter, &buf)
-
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-
-	activePluginCmdMu.Lock()
-	activePluginCmd = cmd
-	activePluginCanceled = false
-	activePluginTimedOut = false
-	activePluginCmdMu.Unlock()
-
-	defer func() {
-		activePluginCmdMu.Lock()
-		activePluginCmd = nil
-		activePluginCmdMu.Unlock()
-	}()
-
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
-
-	var timer *time.Timer
-	var timeoutCh <-chan time.Time
-	if timeout > 0 {
-		timer = time.NewTimer(timeout)
-		defer timer.Stop()
-		timeoutCh = timer.C
-	}
-
-	select {
-	case <-timeoutCh:
-		activePluginCmdMu.Lock()
-		activePluginTimedOut = true
-		activePluginCmdMu.Unlock()
-		if cmd.Process != nil {
-			pid := cmd.Process.Pid
-			LogWarning("[插件] 同步操作执行超时 (%v)，正在强制终止进程组 (PID: %d)...", timeout, pid)
-			killProcessTree(pid)
-		}
-		_ = <-done
-		return buf.String(), fmt.Errorf("插件操作超时（超过 %v），已自动终止", timeout)
-	case err := <-done:
-		if err != nil {
-			activePluginCmdMu.Lock()
-			canceled := activePluginCanceled
-			timedOut := activePluginTimedOut
-			activePluginCmdMu.Unlock()
-			if canceled {
-				return "", fmt.Errorf("操作已被用户手动取消")
-			}
-			if timedOut {
-				return "", fmt.Errorf("插件操作超时（超过 %v），已自动终止", timeout)
-			}
-			return buf.String(), fmt.Errorf("%s", pluginFailMessage(err, buf.String()))
-		}
-		return buf.String(), nil
-	}
-}
-
-func pluginAllowKey(cmd *pluginCommand) string {
-	if cmd.AllowKey != "" {
-		return cmd.AllowKey
-	}
-	if len(cmd.Specs) == 0 {
-		return ""
-	}
-	keys := make([]string, 0, len(cmd.Specs))
-	for _, s := range cmd.Specs {
-		keys = append(keys, normalizePluginKey(s))
-	}
-	return strings.Join(keys, " ")
-}
-
 func pluginOpTimeout(verb pluginVerb) time.Duration {
-	switch verb {
-	case pluginRemove:
+	if verb == pluginRemove {
 		return pluginRemoveTimeout
-	case pluginAdd, pluginUpdate, pluginInstall:
-		return pluginInstallTimeout
-	default:
-		return pluginSyncTimeout
 	}
+	return pluginInstallTimeout
 }
 
 func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error) {
 	timeout := pluginOpTimeout(cmd.Verb)
 	args := cmd.dshArgs()
-
-	if cmd.Verb == pluginList || cmd.Verb == pluginWhy {
-		out, runErr := runPluginSync(args, timeout)
-		if runErr != nil {
-			return "", fmt.Errorf("%s", FormatPnpmFailureMessage(runErr.Error()))
-		}
-		return strings.TrimSpace(out), nil
-	}
 
 	runErr := runPluginSubprocess(args, timeout)
 	if runErr == nil {
@@ -809,10 +657,10 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 
 	// 依赖结构差异自愈
 	if failure.Code == PnpmFailureHoistPatternDiff {
-		LogWarning("[插件] 依赖结构存在差异，执行重建环境")
+		LogWarning("[插件] 依赖结构存在差异，执行重建依赖")
 		_ = runPluginSubprocess([]string{"plugin", "--profile", cmd.Profile, "install", "--no-frozen-lockfile"}, timeout)
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
-			return doneMsg + "（已自动重建依赖环境）", nil
+			return doneMsg + "（已自动重建依赖）", nil
 		}
 		failure = ClassifyPnpmFailure(runErr.Error())
 	}
@@ -820,13 +668,12 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 	// 存储位置异常自愈
 	if failure.Code == PnpmFailureUnexpectedStore {
 		_ = os.RemoveAll(filepath.Join(pluginProfileDir(), "node_modules"))
-		LogWarning("[插件] 存储位置变更，清理本地缓存并重试: %s", cmd.display())
+		LogWarning("[插件] 存储位置变更，清理本地缓存并重试")
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg, nil
 		}
 		failure = ClassifyPnpmFailure(runErr.Error())
 	}
-
 
 	// 大包下载超时自愈
 	if failure.Code == PnpmFailureFetchTimeout {
@@ -839,34 +686,42 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 		failure = ClassifyPnpmFailure(runErr.Error())
 	}
 
-	// 网络波动重试自愈
+	// 网络波动自愈
 	if failure.Code == PnpmFailureTransientNetwork {
-		LogWarning("[插件] 检测到网络连接异常，执行自动重试")
+		LogWarning("[插件] 检测到网络瞬态异常，执行自动重试")
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg, nil
 		}
 		failure = ClassifyPnpmFailure(runErr.Error())
 	}
 
-	// 构建脚本拦截自愈
+	// 构建脚本拦截自愈：直接放行写入 pnpm-workspace.yaml 并重新执行
 	pkgs := parseBlockedPackages(runErr.Error())
 	if len(pkgs) > 0 {
-		if err := ensureAllowBuildsFor(cmd.Profile, pluginAllowKey(cmd), pkgs); err == nil {
-			LogWarning("[插件] 构建脚本被拦截 [%s]，已放行并重新执行", strings.Join(pkgs, ", "))
+		if err := approveBuilds(pluginProfileDir(), pkgs); err == nil {
+			LogWarning("[插件] 构建脚本被拦截 [%s]，已自动放行并重新执行", strings.Join(pkgs, ", "))
 			if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 				return doneMsg + "（已自动放行构建脚本: " + strings.Join(pkgs, ", ") + "）", nil
 			}
 		}
 	}
 
-	// 所有重试均未成功，提炼友好中文报错
 	return "", fmt.Errorf("%s", FormatPnpmFailureMessage(runErr.Error()))
 }
 
 func launchPluginOp(cmd *pluginCommand, doneMsg string) {
 	LogInfo("[插件] 开始执行操作: verb=%s, specs=%v, profile=%s", cmd.Verb, cmd.Specs, cmd.Profile)
 	go func() {
-		// 更新前记录旧版本号（用于后续陈旧性比对）
+		profileDir := pluginProfileDir()
+
+		// 卸载前先反激活 Bundle
+		if cmd.Verb == pluginRemove {
+			for _, spec := range cmd.Specs {
+				_ = selectBundle(profileDir, normalizePluginKey(spec), false)
+			}
+		}
+
+		// 更新前记录旧版本号
 		beforeVersions := make(map[string]string)
 		if cmd.Verb == pluginUpdate {
 			for _, spec := range cmd.Specs {
@@ -877,14 +732,47 @@ func launchPluginOp(cmd *pluginCommand, doneMsg string) {
 			}
 		}
 
+		// 安装操作前暂存事务快照
+		var snap *profileSnapshot
+		if cmd.Verb == pluginAdd || cmd.Verb == pluginInstall {
+			snap = takeProfileSnapshot(profileDir)
+		}
+
 		msg, runErr := runPluginOpWithRecovery(cmd, doneMsg)
 		if runErr != nil {
 			LogWarning("[插件] 插件操作执行失败: %s", runErr)
+			// 失败回滚快照
+			if snap != nil {
+				restoreProfileSnapshot(profileDir, snap)
+			}
 			setPluginDone(false, runErr.Error())
 			return
 		}
 
-		// 针对更新操作进行精准陈旧性比对 (Stale Update Detection)
+		// 激活插件 Bundle
+		if cmd.Verb == pluginAdd {
+			for _, s := range cmd.Specs {
+				name := normalizePluginKey(s)
+				if meta, found := installedPluginMetadata(name); found {
+					if meta.Dsh != nil && meta.Dsh.Bundle != nil && meta.Dsh.Bundle.Patch != "" {
+						_ = selectBundle(profileDir, name, true)
+					}
+				}
+			}
+		}
+
+		// 移除 Bundle 与构建放行项
+		if cmd.Verb == pluginRemove {
+			var keys []string
+			for _, s := range cmd.Specs {
+				name := normalizePluginKey(s)
+				keys = append(keys, name)
+				_ = selectBundle(profileDir, name, false)
+			}
+			_ = removeAllowBuilds(profileDir, keys)
+		}
+
+		// 版本比对反馈
 		if cmd.Verb == pluginUpdate && len(cmd.Specs) > 0 {
 			var updatedDetails []string
 			hasAnyUpgrade := false
@@ -911,26 +799,18 @@ func launchPluginOp(cmd *pluginCommand, doneMsg string) {
 			}
 		}
 
-		// 卸载成功后清理残留（cordis.patch.yml 用户补丁行与 allowBuilds）
-		if cmd.Verb == pluginRemove {
-			for _, spec := range cmd.Specs {
-				_ = RemovePluginFromProfileUserPatch(cmd.Profile, spec)
-			}
-			if pluginAllowKey(cmd) != "" {
-				_ = cleanupAllowBuildsFor(cmd.Profile, pluginAllowKey(cmd))
-			}
-		}
-
 		LogInfo("[插件] 插件操作执行完成: %s", msg)
 		setPluginDone(true, msg)
 	}()
 }
 
-// validatePluginExecution 校验待执行的插件操作指令合规性
 func validatePluginExecution(cmd *pluginCommand) error {
 	switch cmd.Verb {
 	case pluginAdd:
 		for _, spec := range cmd.Specs {
+			if IsProtectedPlugin(spec) {
+				return fmt.Errorf("系统核心模块「%s」受到保护，禁止覆盖安装", spec)
+			}
 			if err := checkDuplicatePlugin(spec); err != nil {
 				return err
 			}
@@ -938,14 +818,19 @@ func validatePluginExecution(cmd *pluginCommand) error {
 	case pluginRemove:
 		for _, spec := range cmd.Specs {
 			if IsProtectedPlugin(spec) {
-				return fmt.Errorf("核心基础设施插件「%s」受到保护，禁止卸载", spec)
+				return fmt.Errorf("系统核心模块「%s」受到保护，只读禁止卸载", spec)
+			}
+		}
+	case pluginUpdate:
+		for _, spec := range cmd.Specs {
+			if IsProtectedPlugin(spec) {
+				return fmt.Errorf("系统核心模块「%s」受到保护，只读禁止单独更新", spec)
 			}
 		}
 	}
 	return nil
 }
 
-// pluginPreviewError 输入框实时解析校验（输入框限制仅支持 add，并复用底层业务校验）
 func pluginPreviewError(cmd *pluginCommand) string {
 	if cmd.Verb != pluginAdd {
 		return "仅支持添加插件指令 (add)"
@@ -1028,7 +913,7 @@ func handlePluginRun(c *gin.Context) {
 	OKMsg(c, startMsg, gin.H{"command": cmd.display()})
 }
 
-// handlePluginToggle 基于官方 cordis.patch.yml 用户补丁层进行热启停
+// handlePluginToggle 对齐官方 selectBundle 机制，仅通过 package.json 的 dsh.profile.bundles 启停
 func handlePluginToggle(c *gin.Context) {
 	var req struct {
 		Name    string `json:"name"`
@@ -1048,16 +933,15 @@ func handlePluginToggle(c *gin.Context) {
 		return
 	}
 
-	// 官方机制：通过在 cordis.patch.yml 中设置 disabled: true/false
-	disabled := !req.Enabled
-	if err := SetPluginDisabled("web", req.Name, disabled); err != nil {
+	dir := pluginProfileDir()
+	if err := selectBundle(dir, req.Name, req.Enabled); err != nil {
 		LogWarning("[插件] 切换插件状态失败 [%s]: %s", req.Name, err)
 		Fail(c, http.StatusInternalServerError, "切换插件状态失败: "+err.Error())
 		return
 	}
 
 	action := "已启用"
-	if disabled {
+	if !req.Enabled {
 		action = "已禁用"
 	}
 	msg := fmt.Sprintf("%s插件「%s」", action, req.Name)

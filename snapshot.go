@@ -43,6 +43,7 @@ type SnapshotProgress struct {
 	Percent int    `json:"percent"`
 	Stage   string `json:"stage"`
 	Message string `json:"message"`
+	Error   string `json:"error,omitempty"`
 }
 
 // GetCurrentSnapshotProgress 获取当前快照任务实时进度
@@ -54,6 +55,26 @@ func GetCurrentSnapshotProgress() SnapshotProgress {
 
 func setSnapshotProgress(p SnapshotProgress) {
 	currentSnapshotMu.Lock()
+	currentSnapshotProgress = p
+	currentSnapshotMu.Unlock()
+	broadcastSnapshotProgress(p)
+}
+
+// failSnapshotProgress 广播快照任务失败状态
+func failSnapshotProgress(action, stage string, err error) {
+	msg := ""
+	if err != nil {
+		msg = err.Error()
+	}
+	currentSnapshotMu.Lock()
+	p := SnapshotProgress{
+		Active:  false,
+		Action:  action,
+		Percent: 0,
+		Stage:   stage,
+		Message: msg,
+		Error:   msg,
+	}
 	currentSnapshotProgress = p
 	currentSnapshotMu.Unlock()
 	broadcastSnapshotProgress(p)
@@ -143,12 +164,6 @@ type CPUInfo struct {
 	Load1     float64 `json:"load1"`
 }
 
-// SystemResourceStatus 统一系统资源状态
-type SystemResourceStatus struct {
-	Disk DiskUsage `json:"disk"`
-	Mem  MemInfo   `json:"mem"`
-	CPU  CPUInfo   `json:"cpu"`
-}
 
 func getDiskUsage(path string) (DiskUsage, error) {
 	if path == "" {
@@ -248,17 +263,6 @@ func getCPUInfo() (CPUInfo, error) {
 	return info, nil
 }
 
-// GetSystemResourceStatus 获取系统资源指标快照
-func GetSystemResourceStatus() SystemResourceStatus {
-	disk, _ := getDiskUsage(globalPkgVar)
-	mem, _ := getMemoryInfo()
-	cpu, _ := getCPUInfo()
-	return SystemResourceStatus{
-		Disk: disk,
-		Mem:  mem,
-		CPU:  cpu,
-	}
-}
 
 const (
 	// MinDiskFreeBytes 磁盘至少 10GB 可用
@@ -301,10 +305,6 @@ func checkHardwareBaseline(extraDisk uint64) error {
 	return nil
 }
 
-// CheckResourceForBuild 部署更新前资源检查
-func CheckResourceForBuild() error {
-	return checkHardwareBaseline(0)
-}
 
 // CheckResourceForSnapshot 创建快照前资源检查
 func CheckResourceForSnapshot() error {
@@ -414,7 +414,7 @@ func ListSnapshots() (SnapshotSummary, error) {
 }
 
 // CreateSnapshot 创建新快照
-func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
+func CreateSnapshot(params CreateSnapshotParams) (retMeta *SnapshotMeta, err error) {
 	cur := state.Status()
 	if cur == StatusBuilding {
 		return nil, fmt.Errorf("服务正在部署更新中，请稍候再试")
@@ -448,9 +448,9 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 			}
 			metaFile := filepath.Join(base, entry.Name(), "meta.json")
 			if data, err := os.ReadFile(metaFile); err == nil {
-				var meta SnapshotMeta
-				if err := json.Unmarshal(data, &meta); err == nil {
-					if strings.EqualFold(strings.TrimSpace(meta.Name), targetName) {
+				var m SnapshotMeta
+				if err := json.Unmarshal(data, &m); err == nil {
+					if strings.EqualFold(strings.TrimSpace(m.Name), targetName) {
 						return nil, fmt.Errorf("已存在同名快照「%s」，请更换名称", targetName)
 					}
 				}
@@ -466,8 +466,19 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 		Message: "停止服务进程与校验系统环境",
 	})
 	defer func() {
-		time.Sleep(1200 * time.Millisecond)
-		clearSnapshotProgress()
+		if err != nil {
+			LogError("[快照] 创建快照失败: %s", err)
+			failSnapshotProgress("create", "创建快照失败", err)
+			go func() {
+				time.Sleep(3 * time.Second)
+				clearSnapshotProgress()
+			}()
+			return
+		}
+		go func() {
+			time.Sleep(1500 * time.Millisecond)
+			clearSnapshotProgress()
+		}()
 	}()
 
 	// 记录服务运行状态
@@ -492,8 +503,8 @@ func CreateSnapshot(params CreateSnapshotParams) (*SnapshotMeta, error) {
 	tarPath := filepath.Join(snapDir, "data.tar.gz")
 
 	pluginCount := 0
-	if deps, _, _, err := readProfileManifest(); err == nil {
-		pluginCount = len(deps)
+	if m, err := readProfileManifestFile(pluginProfileDir()); err == nil {
+		pluginCount = len(m.Dependencies)
 	}
 
 	harnessVer := readVersion()
@@ -786,64 +797,74 @@ func verifySnapshotArchive(tarPath string) error {
 
 	gr, err := gzip.NewReader(f)
 	if err != nil {
-		return fmt.Errorf("gzip 头损坏: %w", err)
+		return fmt.Errorf("gzip 格式损坏: %w", err)
 	}
 	defer gr.Close()
 
 	tr := tar.NewReader(gr)
-	hasFiles := false
-	for {
-		hdr, err := tr.Next()
+	hdr, err := tr.Next()
+	if err != nil {
 		if err == io.EOF {
-			break
+			return fmt.Errorf("快照包内无有效文件")
 		}
-		if err != nil {
-			return fmt.Errorf("tar 结构异常: %w", err)
-		}
-		if hdr.Name != "" {
-			hasFiles = true
-		}
+		return fmt.Errorf("tar 结构异常: %w", err)
 	}
-	if !hasFiles {
+	if hdr.Name == "" {
 		return fmt.Errorf("快照包内无有效文件")
 	}
 	return nil
 }
 
-// RestoreSnapshot 还原指定快照
-func RestoreSnapshot(id string) error {
+// ValidateSnapshotForRestore 还原前校验快照有效性与系统资源
+func ValidateSnapshotForRestore(id string) (*SnapshotMeta, error) {
 	cur := state.Status()
 	if cur == StatusBuilding {
-		return fmt.Errorf("服务正在部署更新中，无法还原快照，请稍候再试")
+		return nil, fmt.Errorf("服务正在部署更新中，无法还原快照，请稍候再试")
 	}
 	if cur == StatusSnapshotting {
-		return fmt.Errorf("已有快照任务正在执行中，请勿重复操作")
+		return nil, fmt.Errorf("已有快照任务正在执行中，请勿重复操作")
 	}
 
 	if !validIDRegex.MatchString(id) {
-		return fmt.Errorf("非法快照 ID: %s", id)
+		return nil, fmt.Errorf("非法快照 ID: %s", id)
 	}
 
 	snapDir := filepath.Join(globalSnapshotsDir, id)
 	metaFile := filepath.Join(snapDir, "meta.json")
 	metaData, err := os.ReadFile(metaFile)
 	if err != nil {
-		return fmt.Errorf("快照元数据不存在: %w", err)
+		return nil, fmt.Errorf("快照元数据不存在")
 	}
 
 	var meta SnapshotMeta
 	if err := json.Unmarshal(metaData, &meta); err != nil {
-		return fmt.Errorf("解析快照元数据失败: %w", err)
+		return nil, fmt.Errorf("解析快照元数据失败: %w", err)
 	}
 
 	if meta.GitCommit != "" {
-		return fmt.Errorf("该快照由旧版源码架构生成，已不兼容当前版本，无法还原，建议删除")
+		return nil, fmt.Errorf("该快照由旧版源码架构生成，已不兼容当前版本，无法还原")
 	}
 
 	tarPath := filepath.Join(snapDir, "data.tar.gz")
 	if _, err := os.Stat(tarPath); err != nil {
-		return fmt.Errorf("快照压缩包缺失: %w", err)
+		return nil, fmt.Errorf("快照压缩包缺失")
 	}
+
+	if err := CheckResourceForRestore(meta.SizeBytes); err != nil {
+		return nil, err
+	}
+
+	return &meta, nil
+}
+
+// RestoreSnapshot 还原指定快照
+func RestoreSnapshot(id string) (err error) {
+	meta, err := ValidateSnapshotForRestore(id)
+	if err != nil {
+		return err
+	}
+
+	tarPath := filepath.Join(globalSnapshotsDir, id, "data.tar.gz")
 
 	LogInfo("[快照] 开始执行快照还原 [%s]: 名称=\"%s\", 版本=%s, 归档大小=%s", id, meta.Name, meta.VersionTag, formatBytes(uint64(meta.SizeBytes)))
 
@@ -855,13 +876,20 @@ func RestoreSnapshot(id string) error {
 		Message: fmt.Sprintf("快照: %s", meta.Name),
 	})
 	defer func() {
-		time.Sleep(1200 * time.Millisecond)
-		clearSnapshotProgress()
+		if err != nil {
+			LogError("[快照] 还原快照失败: %s", err)
+			failSnapshotProgress("restore", "还原快照失败", err)
+			go func() {
+				time.Sleep(3 * time.Second)
+				clearSnapshotProgress()
+			}()
+			return
+		}
+		go func() {
+			time.Sleep(1500 * time.Millisecond)
+			clearSnapshotProgress()
+		}()
 	}()
-
-	if err := CheckResourceForRestore(meta.SizeBytes); err != nil {
-		return err
-	}
 
 	LogInfo("[快照] 开始校验归档包数据完整性")
 	verifyStart := time.Now()
@@ -878,7 +906,6 @@ func RestoreSnapshot(id string) error {
 	state.SetStatus(StatusSnapshotting, "准备还原系统快照...")
 	LogInfo("[快照] 停止当前运行中服务")
 	KillHarness()
-	time.Sleep(1 * time.Second)
 
 	trashDir := filepath.Join(globalPkgVar, fmt.Sprintf("_trash_restore_%s", time.Now().Format("20060102_150405")))
 	_ = os.MkdirAll(trashDir, 0755)
