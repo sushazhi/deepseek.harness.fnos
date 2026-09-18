@@ -400,7 +400,7 @@ func actionErrStatus(err error) int {
 	switch {
 	case strings.Contains(msg, "运行环境未就绪"), strings.Contains(msg, "未就绪"):
 		return http.StatusNotFound
-	case strings.Contains(msg, "构建中"), strings.Contains(msg, "部署中"), strings.Contains(msg, "更新中"), strings.Contains(msg, "启动中"), strings.Contains(msg, "运行中"), strings.Contains(msg, "依赖未安装"):
+	case strings.Contains(msg, "部署中"), strings.Contains(msg, "更新中"), strings.Contains(msg, "启动中"), strings.Contains(msg, "运行中"):
 		return http.StatusConflict
 	default:
 		return http.StatusInternalServerError

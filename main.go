@@ -25,7 +25,6 @@ var (
 	globalPnpmDir      string
 	globalPnpmHome     string
 	globalNpmCache     string
-	globalPluginsDir   string
 	globalSnapshotsDir string
 	runtimeDir         string
 )
@@ -56,7 +55,6 @@ func main() {
 	globalPnpmDir = filepath.Join(globalPkgVar, "pnpm-env")
 	globalPnpmHome = filepath.Join(globalPkgVar, "pnpm-home")
 	globalNpmCache = filepath.Join(globalPkgVar, "npm-cache")
-	globalPluginsDir = filepath.Join(globalPkgVar, "plugins")
 	globalSnapshotsDir = filepath.Join(globalPkgVar, "snapshots")
 	runtimeDir = filepath.Join(globalPkgVar, "dsh-runtime")
 

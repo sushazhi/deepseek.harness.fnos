@@ -177,9 +177,7 @@ export interface SnapshotMeta {
   compression_level?: number
   app_version?: string
   harness_version?: string
-  version_tag?: string
   plugin_count?: number
-  git_commit?: string
 }
 
 /**

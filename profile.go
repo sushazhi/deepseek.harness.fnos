@@ -304,13 +304,12 @@ func parseBlockedPackages(tail string) []string {
 	return pkgs
 }
 
-// ResetAllProfilePatches 清空 Profile 目录与全局插件目录
+// ResetAllProfilePatches 清空 Profile 插件目录
 func ResetAllProfilePatches() {
 	profileFileMu.Lock()
 	defer profileFileMu.Unlock()
 
 	_ = safeRemoveAll(filepath.Join(globalDshHome, "profiles"))
-	_ = safeRemoveAll(globalPluginsDir)
 }
 
 // PnpmFailureCode pnpm 故障分类类型

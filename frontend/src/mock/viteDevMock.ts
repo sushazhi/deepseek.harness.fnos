@@ -56,7 +56,6 @@ export function viteDevMock(): Plugin {
           size_bytes: 1480000000,
           app_version: '0.3.1',
           harness_version: '0.1.5-alpha.1',
-          version_tag: 'v0.1.5-alpha.1',
           plugin_count: 2
         },
         {
@@ -66,7 +65,6 @@ export function viteDevMock(): Plugin {
           size_bytes: 1720000000,
           app_version: '0.3.1',
           harness_version: '0.1.5-alpha.1',
-          version_tag: 'v0.1.5-alpha.1',
           plugin_count: 2
         },
         {
@@ -76,8 +74,6 @@ export function viteDevMock(): Plugin {
           size_bytes: 872800000,
           app_version: '0.2.8',
           harness_version: '0.1.3-alpha.1',
-          version_tag: 'v0.1.3-alpha.1 (d347e70)',
-          git_commit: 'd347e703908d0406b7a7ef80e3a0e594d86b2215',
           plugin_count: 1
         }
       ]
@@ -681,7 +677,6 @@ export function viteDevMock(): Plugin {
             size_bytes: 1560000000,
             app_version: '0.3.0',
             harness_version: config.version,
-            version_tag: `v${config.version}`,
             plugin_count: plugins.length
           }
           mockSnapshots.unshift(newSnap)
@@ -739,8 +734,8 @@ export function viteDevMock(): Plugin {
           const parts = path.split('/')
           const snapId = parts[parts.length - 2]
           const snap = mockSnapshots.find((s) => s.id === snapId)
-          if (snap && snap.git_commit) {
-            return sendJson(res, 400, '该快照由旧版源码架构生成，已不兼容当前版本，无法还原，建议删除', null)
+          if (snap && (!snap.app_version || snap.app_version < '0.3.1')) {
+            return sendJson(res, 400, '该快照生成自旧版源码架构，已不兼容当前版本，无法还原，建议删除', null)
           }
 
           const oldStatus = status

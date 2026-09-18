@@ -82,7 +82,7 @@
                   </n-tag>
 
                   <!-- 旧版不兼容标签 -->
-                  <n-tag v-if="item.git_commit" type="warning" size="tiny" :bordered="false"
+                  <n-tag v-if="isLegacySnapshot(item)" type="warning" size="tiny" :bordered="false"
                     class="shrink-0 text-[10px] sm:text-xs">
                     不兼容
                   </n-tag>
@@ -108,7 +108,7 @@
             <!-- 右侧 / 移动端底部操作栏 -->
             <div
               class="flex items-center justify-end gap-2 shrink-0 pt-2 border-t border-slate-100/80 dark:border-white/[0.04] sm:border-0 sm:pt-0">
-              <n-tooltip v-if="item.git_commit" trigger="hover">
+              <n-tooltip v-if="isLegacySnapshot(item)" trigger="hover">
                 <template #trigger>
                   <span>
                     <n-button secondary type="primary" size="small" disabled
@@ -236,15 +236,26 @@ const compressionOptions = [
   { label: '极限 (Lv 9)', value: 9 }
 ]
 
-// 格式化语义化版本显示：如 v0.1.5-alpha.1
+// 格式化语义化版本显示：如 v0.1.6-alpha.2
 function formatSnapshotVersion(item: SnapshotMeta): string {
-  if (item.version_tag) {
-    return item.version_tag.startsWith('v') ? item.version_tag : 'v' + item.version_tag
-  }
   if (item.harness_version) {
-    return 'v' + item.harness_version.replace(/^v/i, '')
+    const v = item.harness_version.replace(/^v/i, '').trim()
+    return v ? `v${v}` : '-'
   }
   return '-'
+}
+
+// 检查是否生成自 v0.3.1 之前的旧版源码架构（已不兼容 NPM 运行时）
+function isLegacySnapshot(item: SnapshotMeta): boolean {
+  if (!item.app_version) return true
+  const clean = item.app_version.replace(/^v/i, '').trim()
+  const parts = clean.split('.').map(n => parseInt(n, 10) || 0)
+  const major = parts[0] || 0
+  const minor = parts[1] || 0
+  const patch = parts[2] || 0
+  if (major !== 0) return major < 0
+  if (minor !== 3) return minor < 3
+  return patch < 1
 }
 
 function openCreateModal() {

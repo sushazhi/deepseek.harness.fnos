@@ -41,8 +41,7 @@ if [ -n "${DATA_LIBRARY_PATH}" ] && [ -d "${DATA_LIBRARY_PATH}" ]; then
              "${DATA_LIBRARY_PATH}/home" \
              "${DATA_LIBRARY_PATH}/pnpm-env" \
              "${DATA_LIBRARY_PATH}/pnpm-home" \
-             "${DATA_LIBRARY_PATH}/npm-cache" \
-             "${DATA_LIBRARY_PATH}/plugins"
+             "${DATA_LIBRARY_PATH}/npm-cache"
 
     if id "${DSH_RUN_USER}" >/dev/null 2>&1; then
         chown -R "${DSH_RUN_USER}" "${DATA_LIBRARY_PATH}" 2>/dev/null || true

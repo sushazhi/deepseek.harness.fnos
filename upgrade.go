@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -31,8 +32,17 @@ func nodeBin() string { return findBin(filepath.Join(nodeBinDir, "node"), "node"
 func npmBin() string  { return findBin(filepath.Join(nodeBinDir, "npm"), "npm") }
 func pnpmBin() string { return filepath.Join(globalPnpmDir, "node_modules", ".bin", "pnpm") }
 
+var pnpmInstallMu sync.Mutex
+
 // installPnpm 确保插件管理所需的 pnpm 运行环境就绪
 func installPnpm() error {
+	if _, err := os.Stat(pnpmBin()); err == nil {
+		return nil
+	}
+	pnpmInstallMu.Lock()
+	defer pnpmInstallMu.Unlock()
+
+	// 二次校验防并发重复初始化
 	if _, err := os.Stat(pnpmBin()); err == nil {
 		return nil
 	}
@@ -241,20 +251,8 @@ func RepairEnvironment(keepPlugins bool) {
 func repairEnvironment(keepPlugins bool) {
 	tarPath := filepath.Join(globalAppDest, "deepseek-harness.tar.gz")
 	if _, err := os.Stat(tarPath); err != nil {
-		LogInfo("[升级] 未检测到内置离线安装包，通过网络重新安装上游包: %s", tarPath)
-		stopAndWait()
-		if !keepPlugins {
-			ResetAllProfilePatches()
-		}
-		_ = safeRemoveAll(filepath.Join(runtimeDir, "node_modules"))
-		if err := installDshFromNpm(""); err != nil {
-			state.SetStatus(StatusStopped, "环境恢复失败: "+err.Error())
-			return
-		}
-		refreshVersion()
-		SetBuildTime(time.Now())
-		state.SetStatus(StatusStopped, "")
-		restartService()
+		LogWarning("[升级] 恢复出厂设置失败: 未检测到内置离线安装包 (%s)", tarPath)
+		state.SetStatus(StatusStopped, "恢复出厂设置失败: 未检测到内置离线安装包")
 		return
 	}
 
@@ -361,9 +359,23 @@ func update(forceRebuild bool) {
 
 	// 检查更新与在线升级：检测 NPM 上游最新发布版本
 	info, err := fetchRemoteNpmInfo(dshPackageName)
-	targetVer := ""
-	if err == nil && info != nil {
-		targetVer = resolveTargetVersion(info)
+	if err != nil || info == nil {
+		errMsg := "获取远程版本信息失败"
+		if err != nil {
+			errMsg += ": " + err.Error()
+		}
+		LogWarning("[升级] %s", errMsg)
+		state.SetStatus(StatusStopped, errMsg)
+		restartService()
+		return
+	}
+
+	targetVer := resolveTargetVersion(info)
+	if targetVer == "" {
+		LogWarning("[升级] 解析远程版本失败，无有效语义化版本")
+		state.SetStatus(StatusStopped, "解析远程版本失败")
+		restartService()
+		return
 	}
 
 	verBefore := strings.TrimPrefix(strings.TrimSpace(GetConfig().Version), "v")
@@ -371,7 +383,7 @@ func update(forceRebuild bool) {
 		verBefore = readVersion()
 	}
 
-	if targetVer != "" && verBefore != "" && CompareSemver(targetVer, verBefore) <= 0 {
+	if verBefore != "" && CompareSemver(targetVer, verBefore) <= 0 {
 		LogInfo("[升级] 当前运行版本 (v%s) 已高于或等于远端目标版本 (v%s)，跳过更新", verBefore, targetVer)
 		state.SetStatus(StatusStopped, "")
 		restartService()
@@ -379,9 +391,7 @@ func update(forceRebuild bool) {
 	}
 
 	state.SetStatus(StatusBuilding, fmt.Sprintf("正在更新核心服务 (v%s → v%s)...", verBefore, targetVer))
-	if targetVer != "" {
-		state.SetTargetVersion(targetVer)
-	}
+	state.SetTargetVersion(targetVer)
 
 	if err := installDshFromNpm(targetVer); err != nil {
 		LogWarning("[升级] 安装更新失败: %s", err)

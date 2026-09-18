@@ -33,7 +33,7 @@ var (
 	currentSnapshotMu       sync.RWMutex
 
 	// snapshotArchiveTargets 定义快照打包与还原的目标数据清单
-	snapshotArchiveTargets = []string{"config.json", "dsh-runtime", "home", "dsh-data", "plugins"}
+	snapshotArchiveTargets = []string{"config.json", "dsh-runtime", "home", "dsh-data"}
 )
 
 // SnapshotProgress 快照进度事件与状态
@@ -338,10 +338,8 @@ type SnapshotMeta struct {
 	SizeBytes        int64  `json:"size_bytes"`
 	AppVersion       string `json:"app_version"`
 	HarnessVersion   string `json:"harness_version"`
-	VersionTag       string `json:"version_tag"`
 	PluginCount      int    `json:"plugin_count"`
 	CompressionLevel int    `json:"compression_level,omitempty"`
-	GitCommit        string `json:"git_commit,omitempty"`
 }
 
 // CreateSnapshotParams 创建快照参数
@@ -508,10 +506,6 @@ func CreateSnapshot(params CreateSnapshotParams) (retMeta *SnapshotMeta, err err
 	}
 
 	harnessVer := readVersion()
-	versionTag := harnessVer
-	if versionTag != "" && !strings.HasPrefix(strings.ToLower(versionTag), "v") {
-		versionTag = "v" + versionTag
-	}
 
 	level := params.CompressionLevel
 	if level < 1 || level > 9 {
@@ -524,7 +518,6 @@ func CreateSnapshot(params CreateSnapshotParams) (retMeta *SnapshotMeta, err err
 		CreatedAt:        time.Now().Unix(),
 		AppVersion:       globalAppVer,
 		HarnessVersion:   harnessVer,
-		VersionTag:       versionTag,
 		PluginCount:      pluginCount,
 		CompressionLevel: level,
 	}
@@ -841,8 +834,8 @@ func ValidateSnapshotForRestore(id string) (*SnapshotMeta, error) {
 		return nil, fmt.Errorf("解析快照元数据失败: %w", err)
 	}
 
-	if meta.GitCommit != "" {
-		return nil, fmt.Errorf("该快照由旧版源码架构生成，已不兼容当前版本，无法还原")
+	if meta.AppVersion == "" || CompareSemver(meta.AppVersion, "0.3.1") < 0 {
+		return nil, fmt.Errorf("该快照生成自旧版源码架构 (v%s < v0.3.1)，已不兼容当前版本，无法还原", meta.AppVersion)
 	}
 
 	tarPath := filepath.Join(snapDir, "data.tar.gz")
@@ -866,7 +859,7 @@ func RestoreSnapshot(id string) (err error) {
 
 	tarPath := filepath.Join(globalSnapshotsDir, id, "data.tar.gz")
 
-	LogInfo("[快照] 开始执行快照还原 [%s]: 名称=\"%s\", 版本=%s, 归档大小=%s", id, meta.Name, meta.VersionTag, formatBytes(uint64(meta.SizeBytes)))
+	LogInfo("[快照] 开始执行快照还原 [%s]: 名称=\"%s\", 版本=v%s, 归档大小=%s", id, meta.Name, meta.HarnessVersion, formatBytes(uint64(meta.SizeBytes)))
 
 	setSnapshotProgress(SnapshotProgress{
 		Active:  true,
@@ -975,41 +968,7 @@ func RestoreSnapshot(id string) (err error) {
 	InitConfig()
 	InitAppEnv()
 	migrateFromGitToNpm()
-
-	// 若还原自旧版快照且尚未就绪 NPM 运行时，自动补齐运行环境
-	if !isRuntimeReady() {
-		LogInfo("[快照] 检测到核心运行环境未就绪，执行自愈部署")
-		setSnapshotProgress(SnapshotProgress{
-			Active:  true,
-			Action:  "restore",
-			Percent: 88,
-			Stage:   "正在自动补全核心运行时",
-			Message: "部署官方运行环境",
-		})
-		tarPath := filepath.Join(globalAppDest, "deepseek-harness.tar.gz")
-		if _, err := os.Stat(tarPath); err == nil {
-			LogInfo("[快照] 检测到内置离线安装包，优先解压部署: %s", tarPath)
-			if err := extractTarGz(tarPath, runtimeDir); err != nil {
-				LogWarning("[快照] 解压内置离线安装包失败，回退至网络安装: %s", err)
-				if err := installDshFromNpm(""); err != nil {
-					LogWarning("[快照] 运行环境自愈部署失败: %s", err)
-				} else {
-					refreshVersion()
-				}
-			} else {
-				refreshVersion()
-				LogInfo("[快照] 内置运行环境解压就绪")
-			}
-		} else {
-			LogInfo("[快照] 未检测到内置安装包，执行在线安装部署核心环境")
-			if err := installDshFromNpm(""); err != nil {
-				LogWarning("[快照] 核心环境自愈部署失败: %s", err)
-			} else {
-				refreshVersion()
-			}
-		}
-		go installPnpm()
-	}
+	go installPnpm()
 
 	setSnapshotProgress(SnapshotProgress{
 		Active:  true,
