@@ -809,7 +809,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 
 	// 依赖结构差异自愈
 	if failure.Code == PnpmFailureHoistPatternDiff {
-		LogWarning("[插件][自愈] 依赖结构存在差异，执行重建环境")
+		LogWarning("[插件] 依赖结构存在差异，执行重建环境")
 		_ = runPluginSubprocess([]string{"plugin", "--profile", cmd.Profile, "install", "--no-frozen-lockfile"}, timeout)
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg + "（已自动重建依赖环境）", nil
@@ -820,7 +820,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 	// 存储位置异常自愈
 	if failure.Code == PnpmFailureUnexpectedStore {
 		_ = os.RemoveAll(filepath.Join(pluginProfileDir(), "node_modules"))
-		LogWarning("[插件][自愈] 存储位置变更，清理本地缓存并重试: %s", cmd.display())
+		LogWarning("[插件] 存储位置变更，清理本地缓存并重试: %s", cmd.display())
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg, nil
 		}
@@ -830,7 +830,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 
 	// 大包下载超时自愈
 	if failure.Code == PnpmFailureFetchTimeout {
-		LogWarning("[插件][自愈] 依赖包下载超时，延长超时至 10 分钟并重试")
+		LogWarning("[插件] 依赖包下载超时，延长超时至 10 分钟并重试")
 		retryArgs := append([]string{}, args...)
 		retryArgs = append(retryArgs, "--config.fetchTimeout=600000")
 		if runErr = runPluginSubprocess(retryArgs, timeout+10*time.Minute); runErr == nil {
@@ -841,7 +841,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 
 	// 网络波动重试自愈
 	if failure.Code == PnpmFailureTransientNetwork {
-		LogWarning("[插件][自愈] 检测到网络连接异常，执行自动重试")
+		LogWarning("[插件] 检测到网络连接异常，执行自动重试")
 		if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 			return doneMsg, nil
 		}
@@ -852,7 +852,7 @@ func runPluginOpWithRecovery(cmd *pluginCommand, doneMsg string) (string, error)
 	pkgs := parseBlockedPackages(runErr.Error())
 	if len(pkgs) > 0 {
 		if err := ensureAllowBuildsFor(cmd.Profile, pluginAllowKey(cmd), pkgs); err == nil {
-			LogWarning("[插件][自愈] 构建脚本被拦截 [%s]，已放行并重新执行", strings.Join(pkgs, ", "))
+			LogWarning("[插件] 构建脚本被拦截 [%s]，已放行并重新执行", strings.Join(pkgs, ", "))
 			if runErr = runPluginSubprocess(args, timeout); runErr == nil {
 				return doneMsg + "（已自动放行构建脚本: " + strings.Join(pkgs, ", ") + "）", nil
 			}
