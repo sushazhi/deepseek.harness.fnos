@@ -10,7 +10,8 @@ import type {
   SettingsConfig,
   SnapshotSummary,
   SnapshotMeta,
-  CreateSnapshotParams
+  CreateSnapshotParams,
+  DshAccountStatus
 } from '../types/api'
 
 /**
@@ -82,6 +83,18 @@ export const skillAuthApi = {
   confirmAuth: (code: string) => http.post<{ authorized: boolean }>('skill/auth/confirm', { code }),
   logout: () => http.post<{ authorized: boolean }>('skill/auth/logout')
 }
+
+/**
+ * DeepSeek 官方账号授权 API
+ */
+export const accountApi = {
+  getStatus: () => http.get<DshAccountStatus>('account/status'),
+  startLogin: () => http.post<{ authorize_url: string; attempt_id: string; phase: string }>('account/login/start'),
+  confirmLogin: (payload: { url?: string; code?: string; state?: string }) =>
+    http.post<{ message: string }>('account/login/confirm', payload),
+  logout: () => http.post<{ message: string }>('account/logout')
+}
+
 
 
 

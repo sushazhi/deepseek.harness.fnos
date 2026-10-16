@@ -81,10 +81,11 @@ type CheckUpdateResult struct {
 }
 
 type npmPackageInfo struct {
-	Time map[string]string `json:"time"`
+	DistTags map[string]string `json:"dist-tags"`
+	Time     map[string]string `json:"time"`
 }
 
-// fetchRemoteNpmInfo 查询包的发布时间元数据
+// fetchRemoteNpmInfo 查询包的发布时间与 Tag 元数据
 func fetchRemoteNpmInfo(pkgName string) (*npmPackageInfo, error) {
 	cfg := GetConfig()
 	reg := strings.TrimRight(cfg.GetNpmRegistry(), "/")
@@ -113,7 +114,7 @@ func fetchRemoteNpmInfo(pkgName string) (*npmPackageInfo, error) {
 	if err == nil && resp.StatusCode == http.StatusOK {
 		defer resp.Body.Close()
 		var info npmPackageInfo
-		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && len(info.Time) > 0 {
+		if err := json.NewDecoder(resp.Body).Decode(&info); err == nil && (len(info.Time) > 0 || len(info.DistTags) > 0) {
 			return &info, nil
 		}
 	}
@@ -121,7 +122,7 @@ func fetchRemoteNpmInfo(pkgName string) (*npmPackageInfo, error) {
 		_ = resp.Body.Close()
 	}
 
-	cmdArgs := []string{"view", pkgName, "time", "--json", "--registry=" + reg}
+	cmdArgs := []string{"view", pkgName, "dist-tags", "time", "--json", "--registry=" + reg}
 	cmd := exec.Command(npmBin(), cmdArgs...)
 	if cfg.NetworkProxy != "" && strings.Contains(reg, "npmjs.org") {
 		cmd.Env = append(os.Environ(),
@@ -136,16 +137,25 @@ func fetchRemoteNpmInfo(pkgName string) (*npmPackageInfo, error) {
 		return nil, fmt.Errorf("获取 NPM 版本元数据失败: %w", err)
 	}
 
-	var timeMap map[string]string
-	if err := json.Unmarshal(out, &timeMap); err != nil {
-		return nil, fmt.Errorf("解析 NPM 发布时间失败: %w", err)
+	var info npmPackageInfo
+	if err := json.Unmarshal(out, &info); err != nil {
+		return nil, fmt.Errorf("解析 NPM 版本元数据失败: %w", err)
 	}
-	return &npmPackageInfo{Time: timeMap}, nil
+	return &info, nil
 }
 
-// resolveTargetVersion 严格依据语义化版本（Semver）取最高可用版本
-func resolveTargetVersion(info *npmPackageInfo) string {
-	if info == nil || len(info.Time) == 0 {
+// resolveTargetVersion 依据更新渠道解析目标版本：
+// - stable: 取 NPM 的 dist-tags.latest
+// - latest: 取 NPM 所有版本中的最高版本
+func resolveTargetVersion(info *npmPackageInfo, channel string) string {
+	if info == nil {
+		return ""
+	}
+
+	if channel == "stable" {
+		if latest, ok := info.DistTags["latest"]; ok && latest != "" {
+			return strings.TrimPrefix(strings.TrimSpace(latest), "v")
+		}
 		return ""
 	}
 
@@ -154,8 +164,9 @@ func resolveTargetVersion(info *npmPackageInfo) string {
 		if ver == "modified" || ver == "created" {
 			continue
 		}
-		if maxVer == "" || CompareSemver(ver, maxVer) > 0 {
-			maxVer = ver
+		cleanVer := strings.TrimPrefix(strings.TrimSpace(ver), "v")
+		if maxVer == "" || CompareSemver(cleanVer, maxVer) > 0 {
+			maxVer = cleanVer
 		}
 	}
 	return maxVer
@@ -174,7 +185,8 @@ func CheckUpdate() (*CheckUpdateResult, error) {
 	currentVersion := readVersion()
 	tagCurrent := formatVersionTag(currentVersion)
 	reg := strings.TrimRight(GetConfig().GetNpmRegistry(), "/")
-	LogInfo("[升级] 开始检查远程版本更新 (包名=%s, 当前版本=%s, 源=%s)", dshPackageName, tagCurrent, reg)
+	channel := GetConfig().GetUpdateChannel()
+	LogInfo("[升级] 开始检查远程版本更新 (包名=%s, 当前版本=%s, 渠道=%s, 源=%s)", dshPackageName, tagCurrent, channel, reg)
 
 	info, err := fetchRemoteNpmInfo(dshPackageName)
 	if err != nil {
@@ -182,7 +194,7 @@ func CheckUpdate() (*CheckUpdateResult, error) {
 		return nil, fmt.Errorf("检查更新失败: %w", err)
 	}
 
-	remoteVersion := resolveTargetVersion(info)
+	remoteVersion := resolveTargetVersion(info, channel)
 	if remoteVersion == "" {
 		remoteVersion = currentVersion
 	}
@@ -276,7 +288,8 @@ func installDshFromNpm(targetVersion string) error {
 	if targetVersion != "" {
 		pkgSpec = fmt.Sprintf("%s@%s", dshPackageName, targetVersion)
 	} else if info, err := fetchRemoteNpmInfo(dshPackageName); err == nil && info != nil {
-		if bestVer := resolveTargetVersion(info); bestVer != "" {
+		channel := GetConfig().GetUpdateChannel()
+		if bestVer := resolveTargetVersion(info, channel); bestVer != "" {
 			pkgSpec = fmt.Sprintf("%s@%s", dshPackageName, bestVer)
 		}
 	}
@@ -370,7 +383,8 @@ func update(forceRebuild bool) {
 		return
 	}
 
-	targetVer := resolveTargetVersion(info)
+	channel := GetConfig().GetUpdateChannel()
+	targetVer := resolveTargetVersion(info, channel)
 	if targetVer == "" {
 		LogWarning("[升级] 解析远程版本失败，无有效语义化版本")
 		state.SetStatus(StatusStopped, "解析远程版本失败")

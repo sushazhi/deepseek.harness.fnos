@@ -127,7 +127,8 @@ import {
   Puzzle,
   FileText,
   Settings,
-  History
+  History,
+  LayersLinked
 } from '@vicons/tabler'
 import { getThemeOverrides } from './theme'
 import Overview from './views/Overview.vue'
@@ -136,6 +137,7 @@ import SettingsView from './views/Settings.vue'
 import Workspace from './views/Workspace.vue'
 import Plugins from './views/Plugins.vue'
 import Snapshots from './views/Snapshots.vue'
+import AuthView from './views/Auth.vue'
 import { useAppStore } from './stores/app'
 import { useSystemStore } from './stores/system'
 import { trimSdk } from './utils/trimSdk'
@@ -168,11 +170,12 @@ watch(themeMode, (mode) => {
 const currentTheme = computed(() => (themeMode.value === 'dark' ? darkTheme : null))
 const currentThemeOverrides = computed(() => getThemeOverrides(themeMode.value))
 
-type TabKey = 'overview' | 'workspace' | 'logs' | 'plugins' | 'snapshots' | 'settings'
+type TabKey = 'overview' | 'workspace' | 'auth' | 'plugins' | 'snapshots' | 'logs' | 'settings'
 
 const tabLabels: Record<TabKey, string> = {
   overview: '概览 · DeepSeek Harness',
   workspace: '工作区 · DeepSeek Harness',
+  auth: '授权管理 · DeepSeek Harness',
   plugins: '插件管理 · DeepSeek Harness',
   snapshots: '快照管理 · DeepSeek Harness',
   logs: '运行日志 · DeepSeek Harness',
@@ -182,6 +185,7 @@ const tabLabels: Record<TabKey, string> = {
 const views: Record<TabKey, Component> = {
   overview: Overview,
   workspace: Workspace,
+  auth: AuthView,
   logs: Logs,
   plugins: Plugins,
   snapshots: Snapshots,
@@ -195,6 +199,7 @@ function renderIcon(icon: Component) {
 const menuOptions: MenuOption[] = [
   { key: 'overview', label: '概览', icon: renderIcon(Dashboard) },
   { key: 'workspace', label: '工作区', icon: renderIcon(Folder) },
+  { key: 'auth', label: '授权管理', icon: renderIcon(LayersLinked) },
   { key: 'plugins', label: '插件管理', icon: renderIcon(Puzzle) },
   { key: 'snapshots', label: '快照管理', icon: renderIcon(History) },
   { key: 'logs', label: '运行日志', icon: renderIcon(FileText) }
@@ -207,6 +212,7 @@ const settingsMenuOptions: MenuOption[] = [
 const mobileTabs = [
   { key: 'overview' as TabKey, label: '概览', icon: Dashboard },
   { key: 'workspace' as TabKey, label: '工作区', icon: Folder },
+  { key: 'auth' as TabKey, label: '授权', icon: LayersLinked },
   { key: 'plugins' as TabKey, label: '插件', icon: Puzzle },
   { key: 'snapshots' as TabKey, label: '快照', icon: History },
   { key: 'logs' as TabKey, label: '日志', icon: FileText },

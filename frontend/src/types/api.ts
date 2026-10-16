@@ -148,6 +148,7 @@ export interface SettingsConfig {
   network_proxy: string
   proxy_dsh_runtime?: boolean
   npm_registry?: string
+  update_channel?: 'latest' | 'stable'
   access_mode?: 'fngateway' | 'port' | 'custom'
   reverse_proxy_url: string
   access_password: string
@@ -217,6 +218,23 @@ export interface CreateSnapshotParams {
 export interface SkillAuthStatus {
   authorized: boolean
   username?: string
+}
+
+/**
+ * DeepSeek 官方账号状态
+ */
+export interface DshAccountStatus {
+  status: 'signed-out' | 'credential-stored'
+  name?: string
+  contact?: string
+  avatar_url?: string
+  currency?: string
+  balance?: string
+  bonus_balance?: string
+  usage_url?: string
+  top_up_url?: string
+  waiting_sign_in: boolean
+  authorize_url?: string
 }
 
 

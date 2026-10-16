@@ -39,6 +39,10 @@ func InitRoutes(r *gin.Engine) {
 		api.GET("/logs/download", handleDownloadLogs)
 		api.GET("/config", handleGetConfig)
 		api.POST("/config", handleSaveConfig)
+		api.GET("/account/status", handleAccountStatus)
+		api.POST("/account/login/start", handleAccountLoginStart)
+		api.POST("/account/login/confirm", handleAccountLoginConfirm)
+		api.POST("/account/logout", handleAccountLogout)
 		api.POST("/skill/auth/start", handleSkillAuthStart)
 		api.POST("/skill/auth/confirm", handleSkillAuthConfirm)
 		api.POST("/skill/auth/logout", handleSkillAuthLogout)
@@ -613,6 +617,13 @@ func handleSaveConfig(c *gin.Context) {
 		}
 	} else if proxyPortChanged {
 		restartReverseProxy()
+	}
+
+	if oldCfg.GetUpdateChannel() != cfg.GetUpdateChannel() {
+		LogInfo("[配置] DSH 版本更新通道变更 (%s → %s)", oldCfg.GetUpdateChannel(), cfg.GetUpdateChannel())
+	}
+	if oldCfg.GetNpmRegistry() != cfg.GetNpmRegistry() {
+		LogInfo("[配置] NPM 依赖源变更 (%s → %s)", oldCfg.GetNpmRegistry(), cfg.GetNpmRegistry())
 	}
 
 	state.Poke()

@@ -23,6 +23,7 @@ type Config struct {
 	NetworkProxy       string `json:"network_proxy"`
 	ProxyDshRuntime    *bool  `json:"proxy_dsh_runtime,omitempty"`
 	NpmRegistry        string `json:"npm_registry,omitempty"`
+	UpdateChannel      string `json:"update_channel,omitempty"`
 	AccessMode         string `json:"access_mode,omitempty"`
 	ReverseProxyURL    string `json:"reverse_proxy_url,omitempty"`
 	AccessPassword     string `json:"access_password,omitempty"`
@@ -61,6 +62,13 @@ func (c Config) GetNpmRegistry() string {
 	return DefaultNpmRegistry
 }
 
+func (c Config) GetUpdateChannel() string {
+	if strings.EqualFold(strings.TrimSpace(c.UpdateChannel), "stable") {
+		return "stable"
+	}
+	return "latest"
+}
+
 var (
 	globalConfig   Config
 	configMu       sync.RWMutex
@@ -79,12 +87,16 @@ func InitConfig() {
 		EnableBuiltinSkill: &defaultSkillEnabled,
 		ProxyDshRuntime:    &defaultProxyDsh,
 		NpmRegistry:        DefaultNpmRegistry,
+		UpdateChannel:      "latest",
 	}
 	data, err := os.ReadFile(configFilePath)
 	if err != nil {
 		return
 	}
 	_ = json.Unmarshal(data, &globalConfig)
+	if globalConfig.UpdateChannel == "" {
+		globalConfig.UpdateChannel = "latest"
+	}
 	if globalConfig.EnableBuiltinSkill == nil {
 		globalConfig.EnableBuiltinSkill = &defaultSkillEnabled
 	}

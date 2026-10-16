@@ -11,6 +11,7 @@ export const useConfigStore = defineStore('config', () => {
     network_proxy: '',
     proxy_dsh_runtime: false,
     npm_registry: 'https://registry.npmmirror.com',
+    update_channel: 'latest',
     access_mode: 'fngateway',
     reverse_proxy_url: '',
     access_password: '',
@@ -36,6 +37,7 @@ export const useConfigStore = defineStore('config', () => {
       (config.value.network_proxy || '') !== (savedConfig.value.network_proxy || '') ||
       Boolean(config.value.proxy_dsh_runtime) !== Boolean(savedConfig.value.proxy_dsh_runtime) ||
       (config.value.npm_registry || 'https://registry.npmmirror.com') !== (savedConfig.value.npm_registry || 'https://registry.npmmirror.com') ||
+      (config.value.update_channel || 'latest') !== (savedConfig.value.update_channel || 'latest') ||
       (config.value.reverse_proxy_url || '') !== (savedConfig.value.reverse_proxy_url || '') ||
       (config.value.access_password || '') !== (savedConfig.value.access_password || '') ||
       Boolean(config.value.enable_builtin_skill ?? true) !== Boolean(savedConfig.value.enable_builtin_skill ?? true)
@@ -97,6 +99,9 @@ export const useConfigStore = defineStore('config', () => {
         }
         if (!data.npm_registry) {
           data.npm_registry = 'https://registry.npmmirror.com'
+        }
+        if (!data.update_channel) {
+          data.update_channel = 'latest'
         }
         config.value = { ...data }
         savedConfig.value = { ...data }

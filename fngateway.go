@@ -86,6 +86,17 @@ func handleFnGateway(c *gin.Context) {
 			if (p == "/plugins/" || strings.HasSuffix(p, "/plugins/")) && !strings.HasPrefix(pr.Out.URL.RawQuery, "?") && strings.Contains(pr.Out.URL.RawQuery, "client.js") {
 				pr.Out.URL.RawQuery = "?" + pr.Out.URL.RawQuery
 			}
+
+			// 拦截并改写 account/startSignIn 请求中的 callbackOrigin
+			if pr.Out.Body != nil && strings.Contains(pr.Out.URL.Path, "startSignIn") {
+				bodyBytes, err := io.ReadAll(pr.Out.Body)
+				if err == nil && len(bodyBytes) > 0 {
+					newBody := rewriteStartSignInBody(bodyBytes, serverPort)
+					pr.Out.Body = io.NopCloser(bytes.NewReader(newBody))
+					pr.Out.ContentLength = int64(len(newBody))
+					pr.Out.Header.Set("Content-Length", strconv.Itoa(len(newBody)))
+				}
+			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
 			// 上游鉴权失败时失效服务端代持凭据
@@ -198,7 +209,7 @@ func rewriteFnGatewayHtml(body []byte) []byte {
 	})
 
 	// 注入特权契约声明与样式隐藏补丁
-	return injectHtmlHead(modified, []byte(httpPolyfillScript))
+	return injectHtmlHead(modified, []byte(getHttpPolyfillScript()))
 }
 
 // injectHtmlHead 将补丁脚本注入 HTML 的 head 头部

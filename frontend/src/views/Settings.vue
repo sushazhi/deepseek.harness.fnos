@@ -184,43 +184,21 @@
                 </n-form-item>
               </n-gi>
 
-              <!-- 飞牛官方 TRIM CLI 技能开关与授权管理 -->
+              <!-- 飞牛官方内置技能开关 -->
               <n-gi span="2">
                 <div class="mt-1 pt-3.5 border-t border-slate-100 dark:border-slate-800 space-y-1.5">
                   <div class="flex items-start sm:items-center justify-between gap-3">
-                    <div class="flex flex-col sm:flex-row sm:items-center gap-1.5 sm:gap-2">
-                      <!-- 技能标题与帮助提示 -->
-                      <div class="flex items-center gap-1.5">
-                        <span class="text-sm font-medium text-slate-800 dark:text-slate-100">飞牛官方 TRIM CLI 技能</span>
-                        <n-tooltip :trigger="isTouch ? 'click' : 'hover'">
-                          <template #trigger>
-                            <n-icon size="14"
-                              class="text-slate-400 dark:text-slate-500 cursor-help transition-colors active:text-fnos-blue dark:active:text-blue-400">
-                              <Help />
-                            </n-icon>
-                          </template>
-                          自动向 DSH 注入飞牛官方命令行工具，提供 NAS 文件、存储、相册与系统状态管理能力
-                        </n-tooltip>
-                      </div>
-
-                      <!-- 授权状态徽章与操作 -->
-                      <div v-if="config.enable_builtin_skill" class="flex items-center gap-1.5">
-                        <n-tag v-if="skillAuthStatus?.authorized" type="success" size="small" round :bordered="false">
-                          已授权 {{ skillAuthStatus.username ? `(${skillAuthStatus.username})` : '' }}
-                        </n-tag>
-                        <n-tag v-else type="warning" size="small" round :bordered="false">
-                          未授权
-                        </n-tag>
-
-                        <n-button v-if="!skillAuthStatus?.authorized" size="tiny" type="primary" secondary
-                          class="!h-5 !px-2 rounded-md text-[11px] font-medium" @click="openAuthModal">
-                          登录授权
-                        </n-button>
-                        <n-button v-else size="tiny" quaternary type="error" :loading="loggingOut"
-                          class="!h-5 !px-1.5 rounded-md text-[11px]" @click="handleSkillLogout">
-                          解除授权
-                        </n-button>
-                      </div>
+                    <div class="flex items-center gap-1.5">
+                      <span class="text-sm font-medium text-slate-800 dark:text-slate-100">飞牛官方 TRIM CLI 技能</span>
+                      <n-tooltip :trigger="isTouch ? 'click' : 'hover'">
+                        <template #trigger>
+                          <n-icon size="14"
+                            class="text-slate-400 dark:text-slate-500 cursor-help transition-colors active:text-fnos-blue dark:active:text-blue-400">
+                            <Help />
+                          </n-icon>
+                        </template>
+                        自动向 DSH 注入飞牛官方命令行工具，提供 NAS 文件、存储、相册与系统状态管理能力
+                      </n-tooltip>
                     </div>
 
                     <n-switch v-model:value="config.enable_builtin_skill" size="medium"
@@ -238,6 +216,24 @@
           <!-- 网络与依赖源卡片 -->
           <n-card title="网络与依赖源" :bordered="false" class="shadow-sm rounded-2xl">
             <div class="space-y-4">
+              <n-form-item path="update_channel">
+                <template #label>
+                  <div class="flex items-center gap-1.5">
+                    <span>DSH 版本更新通道</span>
+                    <n-tooltip :trigger="isTouch ? 'click' : 'hover'">
+                      <template #trigger>
+                        <n-icon size="14"
+                          class="text-slate-400 dark:text-slate-500 cursor-help transition-colors active:text-fnos-blue dark:active:text-blue-400">
+                          <Help />
+                        </n-icon>
+                      </template>
+                      最新版取 NPM 全量已发布版本的最高版本；稳定版取 NPM latest 标签版本
+                    </n-tooltip>
+                  </div>
+                </template>
+                <n-select v-model:value="config.update_channel" :options="updateChannelOptions" />
+              </n-form-item>
+
               <n-form-item path="npm_registry">
                 <template #label>
                   <div class="flex items-center gap-1.5">
@@ -321,55 +317,6 @@
         </div>
       </n-form>
     </div>
-
-    <!-- 飞牛技能授权弹窗 -->
-    <n-modal v-model:show="showAuthModal" preset="card" title="飞牛技能授权" class="max-w-md rounded-2xl shadow-xl"
-      :mask-closable="!startingAuth && !confirmingAuth">
-      <div class="space-y-3.5 py-1">
-        <!-- 自定义端口 (可选) -->
-        <div
-          class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 space-y-1.5">
-          <div class="flex items-center justify-between text-xs">
-            <span class="font-medium text-slate-700 dark:text-slate-300">访问端口 (可选)</span>
-            <span class="text-[11px] text-slate-400">如无更改，则留空保持默认</span>
-          </div>
-          <n-input v-model:value="authPort" type="text" placeholder="默认端口" clearable
-            :disabled="startingAuth || confirmingAuth" @update:value="handlePortChange" />
-        </div>
-
-        <div
-          class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 space-y-2">
-          <div class="flex items-center justify-between text-xs">
-            <span class="font-medium text-slate-700 dark:text-slate-300">1. 获取授权码</span>
-            <span class="text-[11px] text-slate-400">登录后复制页面代码</span>
-          </div>
-          <n-button type="primary" secondary block :loading="startingAuth" @click="handleOpenAuthPage">
-            <template #icon>
-              <n-icon>
-                <ExternalLink />
-              </n-icon>
-            </template>
-            前往授权页面
-          </n-button>
-        </div>
-
-        <div
-          class="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-100 dark:border-slate-800 space-y-2">
-          <div class="text-xs font-medium text-slate-700 dark:text-slate-300">
-            2. 填入验证
-          </div>
-          <n-input v-model:value="authCode" type="text" placeholder="在此粘贴获取到的授权码" clearable :disabled="confirmingAuth"
-            @keydown.enter="handleConfirmAuth" />
-        </div>
-
-        <div class="flex justify-end gap-2 pt-1.5">
-          <n-button :disabled="confirmingAuth" @click="showAuthModal = false">取消</n-button>
-          <n-button type="primary" :loading="confirmingAuth" :disabled="!authCode.trim()" @click="handleConfirmAuth">
-            确认绑定
-          </n-button>
-        </div>
-      </div>
-    </n-modal>
   </div>
 </template>
 
@@ -392,7 +339,6 @@ import {
   NIcon,
   NButton,
   NSwitch,
-  NTag,
   NModal,
   useMessage,
   useDialog,
@@ -406,7 +352,6 @@ import {
 } from '@vicons/tabler'
 import { useConfigStore } from '../stores/config'
 import { useSystemStore } from '../stores/system'
-import { skillAuthApi } from '../api'
 import { trimSdk } from '../utils/trimSdk'
 import { useIsTouchDevice } from '../utils/device'
 
@@ -421,7 +366,6 @@ const formRef = ref<FormInst | null>(null)
 const {
   config,
   savedConfig,
-  skillAuthStatus,
   saving,
   loadError,
   configLoaded,
@@ -449,114 +393,11 @@ const npmRegistryOptions = [
   { label: 'npm 官方源 (npmjs.org)', value: 'https://registry.npmjs.org' }
 ]
 
-// 飞牛技能授权交互状态
-const showAuthModal = ref(false)
-const startingAuth = ref(false)
-const confirmingAuth = ref(false)
-const loggingOut = ref(false)
-const authUrl = ref('')
-const authCode = ref('')
-const authPort = ref('')
-
-// 端口变更时重置授权链接
-const handlePortChange = () => {
-  authUrl.value = ''
-}
-
-// 打开授权弹窗并拉取登录 URL
-const openAuthModal = async () => {
-  authCode.value = ''
-  authUrl.value = ''
-  showAuthModal.value = true
-  startingAuth.value = true
-  try {
-    const res = await skillAuthApi.startAuth(authPort.value.trim())
-    if (res.success && res.data?.url) {
-      let targetUrl = res.data.url
-      if (targetUrl.includes('/signin?')) {
-        targetUrl = targetUrl.slice(targetUrl.indexOf('/signin?'))
-      }
-      authUrl.value = targetUrl
-    } else {
-      message.error(res.message || '获取授权链接失败')
-    }
-  } catch (err: any) {
-    message.error('获取授权链接异常: ' + (err.message || ''))
-  } finally {
-    startingAuth.value = false
-  }
-}
-
-// 打开授权页面
-const handleOpenAuthPage = async () => {
-  if (!authUrl.value) {
-    startingAuth.value = true
-    try {
-      const res = await skillAuthApi.startAuth(authPort.value.trim())
-      if (res.success && res.data?.url) {
-        let targetUrl = res.data.url
-        if (targetUrl.includes('/signin?')) {
-          targetUrl = targetUrl.slice(targetUrl.indexOf('/signin?'))
-        }
-        authUrl.value = targetUrl
-        window.open(targetUrl, '_blank')
-      } else {
-        message.error(res.message || '获取授权链接失败')
-      }
-    } finally {
-      startingAuth.value = false
-    }
-    return
-  }
-  window.open(authUrl.value, '_blank')
-}
-
-// 确认提交授权码
-const handleConfirmAuth = async () => {
-  const code = authCode.value.trim()
-  if (!code) return
-  confirmingAuth.value = true
-  try {
-    const res = await skillAuthApi.confirmAuth(code)
-    if (res.success) {
-      message.success('飞牛技能授权成功！')
-      showAuthModal.value = false
-      // 状态由后端 WebSocket 自动广播并在 store 中实时同步
-    } else {
-      message.error(res.message || '授权验证失败，请检查授权码是否正确或过期')
-    }
-  } catch (err: any) {
-    message.error('授权验证失败: ' + (err.message || ''))
-  } finally {
-    confirmingAuth.value = false
-  }
-}
-
-// 解除授权
-const handleSkillLogout = () => {
-  dialog.warning({
-    title: '确认解除授权',
-    content: '解除授权后，智能体将无法再通过命令行管理 NAS 资源，需重新授权后恢复。',
-    positiveText: '确认解除',
-    negativeText: '取消',
-    onPositiveClick: async () => {
-      loggingOut.value = true
-      try {
-        const res = await skillAuthApi.logout()
-        if (res.success) {
-          message.success('已解除授权')
-          // 状态由后端 WebSocket 自动广播并在 store 中实时同步
-        } else {
-          message.error(res.message || '解除授权失败')
-        }
-      } catch (err: any) {
-        message.error('解除授权失败: ' + (err.message || ''))
-      } finally {
-        loggingOut.value = false
-      }
-    }
-  })
-}
+// 版本更新通道选项
+const updateChannelOptions = [
+  { label: '最新版', value: 'latest' },
+  { label: '稳定版', value: 'stable' }
+]
 
 watch(isChanged, (changed) => {
   if (changed) {

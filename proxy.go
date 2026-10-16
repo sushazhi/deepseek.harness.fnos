@@ -15,11 +15,20 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 )
+
+var startSignInCallbackOriginRegex = regexp.MustCompile(`"callbackOrigin"\s*:\s*"[^"]+"`)
+
+// rewriteStartSignInBody 改写 account/startSignIn 请求中的 callbackOrigin 为合法回环地址
+func rewriteStartSignInBody(body []byte, serverPort int) []byte {
+	target := fmt.Sprintf(`"callbackOrigin":"http://127.0.0.1:%d"`, serverPort)
+	return startSignInCallbackOriginRegex.ReplaceAll(body, []byte(target))
+}
 
 //go:embed templates/auth_login.html
 var authLoginPageTplContent string
@@ -219,7 +228,7 @@ func proxyWithAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		// 放行公开静态元数据（避免 PWA 清单与图标因浏览器默认无凭证请求而触发登录页拦截）
+		// 放行公开静态元数据（避免 PWA 清单与图标因无凭证而触发登录拦截）
 		if r.URL.Path == "/manifest.webmanifest" || r.URL.Path == "/favicon.svg" || r.URL.Path == "/favicon-dark.svg" || r.URL.Path == "/pwa-icon.svg" {
 			if r.URL.Path == "/pwa-icon.svg" && len(pwaIconSvgBytes) > 0 {
 				w.Header().Set("Content-Type", "image/svg+xml")
@@ -349,6 +358,18 @@ func startReverseProxyLocked() error {
 			// 还原被折叠的 /plugins/?? 多路复用请求
 			if pr.Out.URL.Path == "/plugins/" && !strings.HasPrefix(pr.Out.URL.RawQuery, "?") && strings.Contains(pr.Out.URL.RawQuery, "client.js") {
 				pr.Out.URL.RawQuery = "?" + pr.Out.URL.RawQuery
+			}
+
+			// 拦截并改写 account/startSignIn 请求中的 callbackOrigin
+			if pr.Out.Body != nil && strings.Contains(pr.Out.URL.Path, "startSignIn") {
+				bodyBytes, err := io.ReadAll(pr.Out.Body)
+				if err == nil && len(bodyBytes) > 0 {
+					serverPort := GetConfig().GetServerPort()
+					newBody := rewriteStartSignInBody(bodyBytes, serverPort)
+					pr.Out.Body = io.NopCloser(bytes.NewReader(newBody))
+					pr.Out.ContentLength = int64(len(newBody))
+					pr.Out.Header.Set("Content-Length", strconv.Itoa(len(newBody)))
+				}
 			}
 		},
 		ModifyResponse: func(resp *http.Response) error {
@@ -491,11 +512,15 @@ func restartReverseProxy() {
 	}
 }
 
-const httpPolyfillScript = `<style>[data-slot="settings.action"] { display: none !important; }</style><script>try{window.__DSH_TRANSPORT__=Object.assign(window.__DSH_TRANSPORT__||{},{ownsHost:true});}catch(_){}</script>`
+// getHttpPolyfillScript 动态生成向 HTML 注入的兼容补丁脚本
+func getHttpPolyfillScript() string {
+	serverPort := GetConfig().GetServerPort()
+	return fmt.Sprintf(`<style>[data-slot="settings.action"] { display: none !important; }</style><script>try{window.__DSH_TRANSPORT__=Object.assign(window.__DSH_TRANSPORT__||{},{ownsHost:true});var L="http://127.0.0.1:%d";var F=window.fetch;if(F&&!window.__dsh_f_hooked){window.__dsh_f_hooked=true;window.fetch=function(u,o){if(o&&typeof o.body==="string"&&o.body.indexOf("account/startSignIn")!==-1){o.body=o.body.replace(/"callbackOrigin"\s*:\s*"[^"]+"/,'"callbackOrigin":"'+L+'"');}return F.apply(this,arguments);};}var W=window.WebSocket;if(W&&W.prototype&&!W.__dsh_w_hooked){W.__dsh_w_hooked=true;var _s=W.prototype.send;W.prototype.send=function(d){if(typeof d==="string"&&d.indexOf("account/startSignIn")!==-1){d=d.replace(/"callbackOrigin"\s*:\s*"[^"]+"/,'"callbackOrigin":"'+L+'"');}return _s.call(this,d);};}}catch(_){}</script>`, serverPort)
+}
 
 // injectHtmlPolyfill 将兼容补丁注入 HTML 的 head 头部
 func injectHtmlPolyfill(body []byte) []byte {
-	return injectHtmlHead(body, []byte(httpPolyfillScript))
+	return injectHtmlHead(body, []byte(getHttpPolyfillScript()))
 }
 
 // rewriteProxyManifest 注入修改 PWA manifest 中的应用图标为 /pwa-icon.svg

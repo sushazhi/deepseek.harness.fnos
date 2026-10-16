@@ -25,6 +25,7 @@
 | **6** | 会话头部出现桌面应用分体按钮（如“在 Zed 中打开”） | 后端未检测到 SSH 环境变量时向前端下发本地已安装桌面应用列表 | `InitAppEnv()` 注入 `SSH_CONNECTION="127.0.0.1 0 127.0.0.1 22"`，标记为远程无头环境 | `config.go` |
 | **7** | 移动端 App 提示鉴权失效或报错 `HTML did not preload client.js` | 移动端 WebView 无法自动携带 Strict Cookie、无防缓存头导致缓存旧资源、连续问号折叠 | 1. 服务端代持 `dsh-auth-*` Cookie 并自动注入转发；<br>2. HTML 响应强制 `Cache-Control: no-store`；<br>3. 转发前自动还原 `/plugins/?/` 为 `/plugins/??/` | `harness.go`<br>`proxy.go`<br>`fngateway.go` |
 | **8** | 子路径下附件上传与 WebSocket 连接脱落前缀 | 旧版本采用绝对路径拼接导致脱落挂载前缀 | 上游 v0.2.x 确立 `2026-09-14-web-document-relative-app-routes` 官方架构决议，原生注入 `<base href="./">` 并基于 `document.baseURI` 全面相对化；代理层保持前缀剥离与 Cookie Path 改写即可 | `fngateway.go` |
+| **9** | 反代下点击登录 DeepSeek 账号报 `protocol` 校验失败 | 前端向后端提交外部反代 Origin（非回环），被后端 `loginOrigin` 及 DeepSeek 平台服务端双重回环正则白名单拦截 | 1. 代理层与注入脚本拦截 `startSignIn`，将 `callbackOrigin` 规整为本地回环地址（`http://127.0.0.1:<port>`），确保在原生界面点击登录能正常拉起官方授权页；<br>2. 配合宿主管理面板「授权管理」接收重定向回调地址，由宿主本地 RPC 交换凭据并全局同步登录态 | `proxy.go`<br>`fngateway.go`<br>`dsh_account.go` |
 
 ---
 
@@ -52,10 +53,10 @@ if c.Request.URL.Path == fnGatewayPrefix {
 }
 ```
 
-### 3. 统一补丁注入（httpPolyfillScript）
-向 HTML 注入纯净轻量的样式与特权声明（共 1 行）：
+### 3. 统一补丁注入（getHttpPolyfillScript）
+向 HTML 注入纯净轻量的样式、特权声明与 RPC 参数规整逻辑（纯单行无新增 UI，保持原生体验）：
 ```html
-<style>[data-slot="settings.action"] { display: none !important; }</style><script>try{window.__DSH_TRANSPORT__=Object.assign(window.__DSH_TRANSPORT__||{},{ownsHost:true});}catch(_){}</script>
+<style>[data-slot="settings.action"] { display: none !important; }</style><script>try{window.__DSH_TRANSPORT__=Object.assign(window.__DSH_TRANSPORT__||{},{ownsHost:true});var L="http://127.0.0.1:2298";var F=window.fetch;if(F&&!window.__dsh_f_hooked){window.__dsh_f_hooked=true;window.fetch=function(u,o){if(o&&typeof o.body==="string"&&o.body.indexOf("account/startSignIn")!==-1){o.body=o.body.replace(/"callbackOrigin"\s*:\s*"[^"]+"/,'"callbackOrigin":"'+L+'"');}return F.apply(this,arguments);};}var W=window.WebSocket;if(W&&W.prototype&&!W.__dsh_w_hooked){W.__dsh_w_hooked=true;var _s=W.prototype.send;W.prototype.send=function(d){if(typeof d==="string"&&d.indexOf("account/startSignIn")!==-1){d=d.replace(/"callbackOrigin"\s*:\s*"[^"]+"/,'"callbackOrigin":"'+L+'"');}return _s.call(this,d);};}}catch(_){}</script>
 ```
 
 ### 4. 远程环境标记注入
@@ -69,6 +70,7 @@ _ = os.Setenv("SSH_CONNECTION", "127.0.0.1 0 127.0.0.1 22")
 - **禁用缓存**：HTML 响应头强制设置 `Cache-Control: no-store, no-cache, must-revalidate`；
 - **问号还原**：对形如 `/plugins/?/...` 请求还原为 `/plugins/??/...`；
 - **网关 Manifest 凭据传递**：网关层为 `<link rel="manifest">` 注入 `crossorigin="use-credentials"`，保障飞牛外层网关鉴权 Cookie 正确携带；
-- **Cookie Path 改写**：网关模式下通过正则将 `Path=/` 改写为 `Path=/app/deepseek-harness/fngateway/`。
+- **Cookie Path 改写**：网关模式下通过正则将 `Path=/` 改写为 `Path=/app/deepseek-harness/fngateway/`；
+- **本地凭据兑换与同步**：宿主管理面板「授权管理」模块接收重定向回调地址，通过宿主本地 RPC 直连 DSH 回调接口交换并持久化凭据，实现全局状态同步。
 
 ---
