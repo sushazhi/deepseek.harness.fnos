@@ -38,7 +38,7 @@ var (
 	currentSnapshotCancelMu sync.Mutex
 
 	// snapshotArchiveTargets 定义快照打包与还原的目标数据清单
-	snapshotArchiveTargets = []string{"config.json", "dsh-runtime", "home", "dsh-data"}
+	snapshotArchiveTargets = []string{"config.json", "account_pool.json", "dsh-runtime", "home", "dsh-data"}
 )
 
 // SnapshotProgress 快照进度事件与状态

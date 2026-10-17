@@ -264,4 +264,8 @@ export const useSystemStore = defineStore('system', () => {
     checkUpdate,
     openHarnessApp
   }
+}, {
+  persist: {
+    paths: ['statusData']
+  }
 })

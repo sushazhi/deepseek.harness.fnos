@@ -237,5 +237,17 @@ export interface DshAccountStatus {
   authorize_url?: string
 }
 
-
-
+/**
+ * 已保存的 DeepSeek 账号公开信息
+ */
+export interface AccountPublicInfo {
+  id: string
+  name?: string
+  contact?: string
+  avatar_url?: string
+  currency?: string
+  balance?: string
+  bonus_balance?: string
+  is_active: boolean
+  last_active_at: number
+}

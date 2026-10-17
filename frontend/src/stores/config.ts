@@ -162,4 +162,8 @@ export const useConfigStore = defineStore('config', () => {
     resetConfig,
     updateSkillAuthStatus
   }
+}, {
+  persist: {
+    paths: ['config', 'savedConfig', 'skillAuthStatus', 'configLoaded']
+  }
 })

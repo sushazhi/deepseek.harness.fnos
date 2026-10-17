@@ -7,6 +7,7 @@ import { usePluginStore } from './plugin'
 import { useLogStore } from './log'
 import { useSnapshotStore } from './snapshot'
 import { useConfigStore } from './config'
+import { useAuthStore } from './auth'
 
 export const useAppStore = defineStore('app', () => {
   const currentTab = ref('overview')
@@ -26,6 +27,7 @@ export const useAppStore = defineStore('app', () => {
     const logStore = useLogStore()
     const snapshotStore = useSnapshotStore()
     const configStore = useConfigStore()
+    const authStore = useAuthStore()
 
     systemStore.startClock()
 
@@ -67,11 +69,12 @@ export const useAppStore = defineStore('app', () => {
     })
 
     wsClient.on('reconnected', () => {
-      // 重新连接后主动拉取一次最新工作区、插件、快照与日志
+      // 重新连接后主动拉取一次最新工作区、插件、快照、日志与账号状态
       workspaceStore.fetchWorkspaces()
       pluginStore.fetchPlugins()
       snapshotStore.fetchSnapshots()
       logStore.fetchLogs()
+      authStore.fetchAccountStatus(true)
     })
 
     // 建立连接
@@ -82,5 +85,9 @@ export const useAppStore = defineStore('app', () => {
     currentTab,
     setTab,
     init
+  }
+}, {
+  persist: {
+    paths: ['currentTab']
   }
 })

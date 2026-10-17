@@ -207,4 +207,8 @@ export const useSnapshotStore = defineStore('snapshot', () => {
     restoreSnapshot,
     deleteSnapshot
   }
+}, {
+  persist: {
+    paths: ['snapshots', 'totalSizeBytes']
+  }
 })

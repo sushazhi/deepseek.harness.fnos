@@ -3,15 +3,21 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"gopkg.in/yaml.v3"
 )
 
 // DshAccountStatus DeepSeek 账号状态数据结构
@@ -28,6 +34,35 @@ type DshAccountStatus struct {
 	WaitingSignIn bool   `json:"waiting_sign_in"`
 	AuthorizeURL  string `json:"authorize_url,omitempty"`
 }
+
+// AccountPoolItem 账号池持久化存储模型（包含原生 YAML grant 节点）
+type AccountPoolItem struct {
+	ID           string         `json:"id"`
+	Name         string         `json:"name"`
+	Contact      string         `json:"contact"`
+	AvatarURL    string         `json:"avatar_url"`
+	Currency     string         `json:"currency"`
+	Balance      string         `json:"balance"`
+	BonusBalance string         `json:"bonus_balance"`
+	Credential   map[string]any `json:"credential"`
+	LastActiveAt int64          `json:"last_active_at"`
+	CreatedAt    int64          `json:"created_at"`
+}
+
+// AccountPublicInfo 前端脱敏展示模型
+type AccountPublicInfo struct {
+	ID           string `json:"id"`
+	Name         string `json:"name"`
+	Contact      string `json:"contact"`
+	AvatarURL    string `json:"avatar_url"`
+	Currency     string `json:"currency"`
+	Balance      string `json:"balance"`
+	BonusBalance string `json:"bonus_balance"`
+	IsActive     bool   `json:"is_active"`
+	LastActiveAt int64  `json:"last_active_at"`
+}
+
+var accountPoolMu sync.RWMutex
 
 // defaultClientMetadata 默认客户端元数据
 func defaultClientMetadata() map[string]any {
@@ -239,6 +274,10 @@ func handleAccountStatus(c *gin.Context) {
 		} else {
 			LogWarning("[账号] 查询余额失败: %v", err)
 		}
+
+		if status.Name != "" || status.Contact != "" {
+			syncActiveAccountToPool(&status)
+		}
 	}
 
 	OK(c, status)
@@ -430,4 +469,328 @@ func handleAccountLogout(c *gin.Context) {
 
 	LogInfo("[账号] DeepSeek 官方账号已退出登录")
 	OK(c, gin.H{"message": "已成功退出登录"})
+}
+
+// normalizeMap 将任意 map 结构标准化为 map[string]any
+func normalizeMap(in any) map[string]any {
+	if in == nil {
+		return nil
+	}
+	if m, ok := in.(map[string]any); ok {
+		return m
+	}
+	b, err := json.Marshal(in)
+	if err != nil {
+		return nil
+	}
+	var out map[string]any
+	if err := json.Unmarshal(b, &out); err != nil {
+		return nil
+	}
+	return out
+}
+
+// getAccountPoolPath 获取账号池存储文件路径
+func getAccountPoolPath() string {
+	return filepath.Join(globalPkgVar, "account_pool.json")
+}
+
+// loadAccountPoolLocked 加载账号池（需在锁内执行）
+func loadAccountPoolLocked() []AccountPoolItem {
+	poolPath := getAccountPoolPath()
+	data, err := os.ReadFile(poolPath)
+	if err != nil {
+		return []AccountPoolItem{}
+	}
+	var items []AccountPoolItem
+	if err := json.Unmarshal(data, &items); err != nil {
+		return []AccountPoolItem{}
+	}
+	return items
+}
+
+// saveAccountPoolLocked 保存账号池（需在锁内执行，严格设置 0600 权限）
+func saveAccountPoolLocked(items []AccountPoolItem) error {
+	poolPath := getAccountPoolPath()
+	data, err := json.MarshalIndent(items, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmpFile := fmt.Sprintf("%s.tmp.%d", poolPath, time.Now().UnixNano())
+	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpFile, poolPath); err != nil {
+		_ = os.Remove(tmpFile)
+		return err
+	}
+	_ = os.Chmod(poolPath, 0600)
+	return nil
+}
+
+// readCurrentCredentialRecord 读取 .credentials.yaml 中的 deepseek-account-platform/default 凭据
+func readCurrentCredentialRecord() (map[string]any, error) {
+	credFile := filepath.Join(globalDshHome, ".credentials.yaml")
+	data, err := os.ReadFile(credFile)
+	if err != nil {
+		return nil, err
+	}
+	var doc map[string]any
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	records := normalizeMap(doc["records"])
+	if records == nil {
+		return nil, fmt.Errorf("records 节点不存在")
+	}
+	rawDefault, exists := records["deepseek-account-platform/default"]
+	if !exists || rawDefault == nil {
+		return nil, fmt.Errorf("未找到默认账号凭据记录")
+	}
+	return normalizeMap(rawDefault), nil
+}
+
+// writeCredentialRecordToYaml 将凭据以原子方式覆写至 .credentials.yaml，触发 DSH 原生 watcher
+func writeCredentialRecordToYaml(record map[string]any) error {
+	credFile := filepath.Join(globalDshHome, ".credentials.yaml")
+	var doc map[string]any
+	if data, err := os.ReadFile(credFile); err == nil {
+		_ = yaml.Unmarshal(data, &doc)
+	}
+	if doc == nil {
+		doc = make(map[string]any)
+	}
+	records := normalizeMap(doc["records"])
+	if records == nil {
+		records = make(map[string]any)
+	}
+	if record != nil {
+		records["deepseek-account-platform/default"] = record
+	} else {
+		delete(records, "deepseek-account-platform/default")
+	}
+	doc["records"] = records
+
+	out, err := yaml.Marshal(doc)
+	if err != nil {
+		return err
+	}
+	tmpFile := fmt.Sprintf("%s.tmp.%d", credFile, time.Now().UnixNano())
+	if err := os.WriteFile(tmpFile, out, 0600); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpFile, credFile); err != nil {
+		_ = os.Remove(tmpFile)
+		return err
+	}
+	_ = os.Chmod(credFile, 0600)
+	return nil
+}
+
+// extractTokenHash 提取凭据中 Token 的 SHA-256 摘要前缀，用于安全比对和标识
+func extractTokenHash(record map[string]any) string {
+	if record == nil {
+		return ""
+	}
+	payload := normalizeMap(record["payload"])
+	if payload == nil {
+		return ""
+	}
+	token, _ := payload["token"].(string)
+	if token == "" {
+		return ""
+	}
+	hash := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(hash[:])[:16]
+}
+
+// syncActiveAccountToPool 将当前活跃账号及其凭据自动归档到账号池
+func syncActiveAccountToPool(status *DshAccountStatus) {
+	if status == nil || status.Status != "credential-stored" {
+		return
+	}
+	cred, err := readCurrentCredentialRecord()
+	if err != nil || cred == nil {
+		return
+	}
+	tokenHash := extractTokenHash(cred)
+	if tokenHash == "" {
+		return
+	}
+
+	accountPoolMu.Lock()
+	defer accountPoolMu.Unlock()
+
+	items := loadAccountPoolLocked()
+	now := time.Now().Unix()
+
+	foundIdx := -1
+	for i, item := range items {
+		if (status.Contact != "" && item.Contact == status.Contact) || item.ID == tokenHash || extractTokenHash(item.Credential) == tokenHash {
+			foundIdx = i
+			break
+		}
+	}
+
+	accountID := tokenHash
+	if status.Contact != "" {
+		accountID = status.Contact
+	}
+
+	if foundIdx >= 0 {
+		items[foundIdx].ID = accountID
+		if status.Name != "" {
+			items[foundIdx].Name = status.Name
+		}
+		if status.Contact != "" {
+			items[foundIdx].Contact = status.Contact
+		}
+		if status.AvatarURL != "" {
+			items[foundIdx].AvatarURL = status.AvatarURL
+		}
+		if status.Currency != "" {
+			items[foundIdx].Currency = status.Currency
+		}
+		if status.Balance != "" {
+			items[foundIdx].Balance = status.Balance
+		}
+		if status.BonusBalance != "" {
+			items[foundIdx].BonusBalance = status.BonusBalance
+		}
+		items[foundIdx].Credential = cred
+		items[foundIdx].LastActiveAt = now
+	} else {
+		newItem := AccountPoolItem{
+			ID:           accountID,
+			Name:         status.Name,
+			Contact:      status.Contact,
+			AvatarURL:    status.AvatarURL,
+			Currency:     status.Currency,
+			Balance:      status.Balance,
+			BonusBalance: status.BonusBalance,
+			Credential:   cred,
+			LastActiveAt: now,
+			CreatedAt:    now,
+		}
+		items = append(items, newItem)
+	}
+
+	_ = saveAccountPoolLocked(items)
+}
+
+// handleAccountPoolList 获取已保存的账号池列表（脱敏返回）
+func handleAccountPoolList(c *gin.Context) {
+	accountPoolMu.RLock()
+	items := loadAccountPoolLocked()
+	accountPoolMu.RUnlock()
+
+	activeCred, _ := readCurrentCredentialRecord()
+	activeHash := extractTokenHash(activeCred)
+
+	res := make([]AccountPublicInfo, 0, len(items))
+	for _, it := range items {
+		isActive := activeHash != "" && extractTokenHash(it.Credential) == activeHash
+		res = append(res, AccountPublicInfo{
+			ID:           it.ID,
+			Name:         it.Name,
+			Contact:      it.Contact,
+			AvatarURL:    it.AvatarURL,
+			Currency:     it.Currency,
+			Balance:      it.Balance,
+			BonusBalance: it.BonusBalance,
+			IsActive:     isActive,
+			LastActiveAt: it.LastActiveAt,
+		})
+	}
+
+	OK(c, res)
+}
+
+// handleAccountSwitch 快速切换当前活跃的 DeepSeek 账号
+func handleAccountSwitch(c *gin.Context) {
+	var req struct {
+		ID string `json:"id"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil || strings.TrimSpace(req.ID) == "" {
+		Fail(c, http.StatusBadRequest, "参数无效，请提供目标账号 ID")
+		return
+	}
+	targetID := strings.TrimSpace(req.ID)
+
+	accountPoolMu.Lock()
+	items := loadAccountPoolLocked()
+	var targetItem *AccountPoolItem
+	for i := range items {
+		if items[i].ID == targetID {
+			targetItem = &items[i]
+			items[i].LastActiveAt = time.Now().Unix()
+			break
+		}
+	}
+	if targetItem == nil {
+		accountPoolMu.Unlock()
+		Fail(c, http.StatusNotFound, "目标账号在凭据池中不存在")
+		return
+	}
+	_ = saveAccountPoolLocked(items)
+	accountPoolMu.Unlock()
+
+	// 1. 将目标凭据原子覆写进 .credentials.yaml
+	if err := writeCredentialRecordToYaml(targetItem.Credential); err != nil {
+		Fail(c, http.StatusInternalServerError, "写入凭据文件失败: "+err.Error())
+		return
+	}
+
+	// 2. 清除会话凭据缓存，通知 DSH 重新鉴权
+	InvalidateDshSession()
+
+	// 3. 短暂等待 150ms 以便 DSH 文件热监听重载生效
+	time.Sleep(150 * time.Millisecond)
+
+	LogInfo("[账号] 已成功将活跃账号切换为: %s (%s)", targetItem.Name, targetItem.Contact)
+	OK(c, gin.H{"message": "账号切换成功", "id": targetID})
+}
+
+// handleAccountPoolDelete 从账号池中移除指定历史账号
+func handleAccountPoolDelete(c *gin.Context) {
+	targetID := strings.TrimSpace(c.Param("id"))
+	if targetID == "" {
+		Fail(c, http.StatusBadRequest, "请指定要移除的账号 ID")
+		return
+	}
+
+	accountPoolMu.Lock()
+	defer accountPoolMu.Unlock()
+
+	items := loadAccountPoolLocked()
+	foundIdx := -1
+	for i, item := range items {
+		if item.ID == targetID {
+			foundIdx = i
+			break
+		}
+	}
+	if foundIdx < 0 {
+		Fail(c, http.StatusNotFound, "未找到该历史账号")
+		return
+	}
+
+	targetItem := items[foundIdx]
+
+	activeCred, _ := readCurrentCredentialRecord()
+	isActive := activeCred != nil && extractTokenHash(activeCred) == extractTokenHash(targetItem.Credential)
+
+	items = append(items[:foundIdx], items[foundIdx+1:]...)
+	_ = saveAccountPoolLocked(items)
+
+	if isActive {
+		_ = writeCredentialRecordToYaml(nil)
+		InvalidateDshSession()
+		go func() {
+			_, _ = callDshRpc("account/signOut", map[string]any{"client": defaultClientMetadata()})
+		}()
+	}
+
+	LogInfo("[账号] 已从凭据池移除账号: %s (%s)", targetItem.Name, targetItem.Contact)
+	OK(c, gin.H{"message": "账号凭据已安全移除"})
 }

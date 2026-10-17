@@ -64,4 +64,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     openDataLibrary,
     openWorkspace
   }
+}, {
+  persist: {
+    paths: ['workspaceData', 'dataLibraryPath']
+  }
 })

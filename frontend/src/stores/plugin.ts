@@ -198,4 +198,8 @@ export const usePluginStore = defineStore('plugin', () => {
     updatePlugin,
     uninstallPlugin
   }
+}, {
+  persist: {
+    paths: ['plugins']
+  }
 })

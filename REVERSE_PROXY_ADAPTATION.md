@@ -54,7 +54,7 @@ if c.Request.URL.Path == fnGatewayPrefix {
 ```
 
 ### 3. 统一补丁注入（getHttpPolyfillScript）
-向 HTML 注入纯净轻量的样式、特权声明与 RPC 参数规整逻辑（纯单行无新增 UI，保持原生体验）：
+向 HTML 注入纯净轻量的样式、特权声明与 RPC 参数规整逻辑：
 ```html
 <style>[data-slot="settings.action"] { display: none !important; }</style><script>try{window.__DSH_TRANSPORT__=Object.assign(window.__DSH_TRANSPORT__||{},{ownsHost:true});var L="http://127.0.0.1:2298";var F=window.fetch;if(F&&!window.__dsh_f_hooked){window.__dsh_f_hooked=true;window.fetch=function(u,o){if(o&&typeof o.body==="string"&&o.body.indexOf("account/startSignIn")!==-1){o.body=o.body.replace(/"callbackOrigin"\s*:\s*"[^"]+"/,'"callbackOrigin":"'+L+'"');}return F.apply(this,arguments);};}var W=window.WebSocket;if(W&&W.prototype&&!W.__dsh_w_hooked){W.__dsh_w_hooked=true;var _s=W.prototype.send;W.prototype.send=function(d){if(typeof d==="string"&&d.indexOf("account/startSignIn")!==-1){d=d.replace(/"callbackOrigin"\s*:\s*"[^"]+"/,'"callbackOrigin":"'+L+'"');}return _s.call(this,d);};}}catch(_){}</script>
 ```

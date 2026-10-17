@@ -11,7 +11,8 @@ import type {
   SnapshotSummary,
   SnapshotMeta,
   CreateSnapshotParams,
-  DshAccountStatus
+  DshAccountStatus,
+  AccountPublicInfo
 } from '../types/api'
 
 /**
@@ -89,6 +90,9 @@ export const skillAuthApi = {
  */
 export const accountApi = {
   getStatus: () => http.get<DshAccountStatus>('account/status'),
+  getPool: () => http.get<AccountPublicInfo[]>('account/pool'),
+  switchAccount: (id: string) => http.post<{ message: string; id: string }>('account/switch', { id }),
+  deleteFromPool: (id: string) => http.delete<{ message: string }>(`account/pool/${encodeURIComponent(id)}`),
   startLogin: () => http.post<{ authorize_url: string; attempt_id: string; phase: string }>('account/login/start'),
   confirmLogin: (payload: { url?: string; code?: string; state?: string }) =>
     http.post<{ message: string }>('account/login/confirm', payload),

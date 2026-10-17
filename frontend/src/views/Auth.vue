@@ -6,7 +6,7 @@
       <h1 class="text-xl font-bold text-slate-800 dark:text-slate-100 tracking-tight shrink-0">授权管理</h1>
 
       <!-- 右侧刷新状态按钮 -->
-      <n-button size="small" secondary :loading="refreshing" @click="fetchAccountStatus(true)"
+      <n-button size="small" secondary :loading="refreshing" @click="handleManualRefresh"
         class="!h-8 !px-3 rounded-lg text-xs font-medium transition-transform duration-150 active:scale-95">
         <template #icon>
           <n-icon :size="15">
@@ -63,7 +63,7 @@
                 登录授权
               </n-button>
               <template v-else>
-                <n-button size="medium" secondary @click="openLoginModal"
+                <n-button size="medium" secondary @click="openSwitchAccountModal"
                   class="!h-9 sm:!h-10 px-4 rounded-xl text-xs sm:text-sm font-medium transition-transform duration-150 active:scale-95">
                   切换账号
                 </n-button>
@@ -166,7 +166,9 @@
               <n-button v-if="!isSkillEnabled" size="medium" secondary @click="goToSettings"
                 class="w-full sm:w-auto !h-9 sm:!h-10 px-4 font-medium rounded-xl text-sm transition-transform duration-150 active:scale-95">
                 <template #icon>
-                  <n-icon :size="16"><Settings /></n-icon>
+                  <n-icon :size="16">
+                    <Settings />
+                  </n-icon>
                 </template>
                 前往开启
               </n-button>
@@ -185,6 +187,84 @@
         </div>
       </n-card>
     </div>
+
+    <!-- 切换 DeepSeek 账号弹窗 -->
+    <n-modal v-model:show="showSwitchModal" preset="card" title="切换 DeepSeek 账号"
+      class="w-full max-w-md rounded-2xl shadow-xl" :mask-closable="!switchingAccountId">
+      <div class="space-y-4 py-1">
+        <!-- 账号列表容器 -->
+        <n-spin :show="loadingPool">
+          <div v-if="accountPool.length === 0" class="py-8 text-center text-xs text-slate-400">
+            暂无已保存的历史账号凭据
+          </div>
+          <div v-else class="space-y-2.5 max-h-80 overflow-y-auto pr-0.5">
+            <div v-for="item in accountPool" :key="item.id"
+              class="p-3 rounded-xl border transition-all duration-150 flex items-center justify-between gap-3"
+              :class="item.is_active
+                ? 'bg-blue-50/70 dark:bg-blue-950/30 border-blue-200/80 dark:border-blue-900/60 shadow-xs'
+                : 'bg-slate-50 dark:bg-slate-800/60 border-slate-100 dark:border-slate-800 hover:border-slate-300 dark:hover:border-slate-700'">
+              
+              <!-- 账号信息展示 -->
+              <div class="flex items-center gap-3 min-w-0 flex-1">
+                <n-avatar v-if="item.avatar_url" round :size="36" :src="item.avatar_url" class="shrink-0" />
+                <div v-else class="w-9 h-9 rounded-full bg-slate-200 dark:bg-slate-700 flex items-center justify-center shrink-0 text-slate-500 dark:text-slate-400">
+                  <n-icon :size="18"><User /></n-icon>
+                </div>
+                <div class="min-w-0 flex-1 space-y-0.5">
+                  <div class="flex items-center gap-1.5 flex-wrap">
+                    <span class="text-xs sm:text-sm font-semibold text-slate-800 dark:text-slate-100 truncate">
+                      {{ item.name || 'DeepSeek 用户' }}
+                    </span>
+                    <n-tag v-if="item.is_active" type="success" size="tiny" round :bordered="false" class="font-medium text-[10px]">
+                      当前使用
+                    </n-tag>
+                  </div>
+                  <p class="text-[11px] text-slate-400 dark:text-slate-500 truncate">
+                    {{ item.contact || '已验证' }}
+                    <span v-if="item.balance" class="ml-1 text-slate-600 dark:text-slate-300 font-mono">
+                      (¥{{ formatAmount(item.balance) }})
+                    </span>
+                  </p>
+                </div>
+              </div>
+
+              <!-- 切换与删除操作 -->
+              <div class="flex items-center gap-1.5 shrink-0">
+                <n-button v-if="!item.is_active" size="tiny" type="primary" secondary
+                  :loading="switchingAccountId === item.id"
+                  :disabled="!!switchingAccountId"
+                  @click="handleSwitchAccount(item.id, item.name || item.contact)"
+                  class="rounded-lg !h-7 !px-2.5 text-xs font-medium">
+                  切换
+                </n-button>
+                <n-popconfirm @positive-click="handleDeleteAccount(item.id)">
+                  <template #trigger>
+                    <n-button size="tiny" quaternary type="error" :disabled="!!switchingAccountId"
+                      class="rounded-lg !h-7 !w-7 !p-0">
+                      <template #icon>
+                        <n-icon :size="14"><Trash /></n-icon>
+                      </template>
+                    </n-button>
+                  </template>
+                  确认从本机移除此账号凭据？下次切换需重新授权。
+                </n-popconfirm>
+              </div>
+            </div>
+          </div>
+        </n-spin>
+
+        <!-- 底部添加新账号 -->
+        <div class="pt-2 border-t border-slate-100 dark:border-white/[0.06] flex items-center justify-between gap-2">
+          <n-button block type="primary" dashed @click="handleAddAccountFromSwitch"
+            class="!h-9 rounded-xl text-xs font-medium">
+            <template #icon>
+              <n-icon :size="15"><Plus /></n-icon>
+            </template>
+            添加新账号
+          </n-button>
+        </div>
+      </div>
+    </n-modal>
 
     <!-- DeepSeek 账号授权弹窗 -->
     <n-modal v-model:show="showLoginModal" preset="card" title="DeepSeek 账号授权"
@@ -220,8 +300,8 @@
 
           <!-- 粘贴输入框 -->
           <n-input v-model:value="callbackUrlInput" type="text"
-            placeholder="http://127.0.0.1:2298/oauth/callback?code=xxx" clearable :disabled="confirmingLogin"
-            autofocus @keydown.enter="handleConfirmLogin" class="rounded-xl font-mono text-xs" />
+            placeholder="http://127.0.0.1:2298/oauth/callback?code=xxx" clearable :disabled="confirmingLogin" autofocus
+            @keydown.enter="handleConfirmLogin" class="rounded-xl font-mono text-xs" />
         </div>
 
         <div class="flex justify-end gap-2 pt-1">
@@ -293,7 +373,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onActivated } from 'vue'
 import {
   NCard,
   NButton,
@@ -302,6 +382,8 @@ import {
   NModal,
   NInput,
   NAvatar,
+  NSpin,
+  NPopconfirm,
   useMessage
 } from 'naive-ui'
 import {
@@ -309,15 +391,19 @@ import {
   Terminal2,
   ExternalLink,
   Refresh,
-  Settings
+  Settings,
+  Plus,
+  Trash,
+  User
 } from '@vicons/tabler'
 import { accountApi, skillAuthApi } from '../api'
+import { useAuthStore } from '../stores/auth'
 import { useConfigStore } from '../stores/config'
 import { useAppStore } from '../stores/app'
 import { trimSdk } from '../utils/trimSdk'
-import type { DshAccountStatus } from '../types/api'
 
 const message = useMessage()
+const authStore = useAuthStore()
 const configStore = useConfigStore()
 const appStore = useAppStore()
 
@@ -327,14 +413,49 @@ function goToSettings() {
   appStore.setTab('settings')
 }
 
-const refreshing = ref(false)
-const accountStatus = ref<DshAccountStatus>({
-  status: 'signed-out',
-  waiting_sign_in: false
-})
-
-const isAccountLoggedIn = computed(() => accountStatus.value.status === 'credential-stored')
+const refreshing = computed(() => authStore.refreshing)
+const accountStatus = computed(() => authStore.accountStatus)
+const isAccountLoggedIn = computed(() => authStore.isAccountLoggedIn)
 const skillAuthStatus = computed(() => configStore.skillAuthStatus)
+
+// 账号池相关状态
+const accountPool = computed(() => authStore.accountPool)
+const loadingPool = computed(() => authStore.loadingPool)
+const switchingAccountId = computed(() => authStore.switchingAccountId)
+const showSwitchModal = ref(false)
+
+// 打开多账号切换弹窗
+function openSwitchAccountModal() {
+  showSwitchModal.value = true
+  authStore.fetchAccountPool(false)
+}
+
+// 切换至目标账号
+async function handleSwitchAccount(id: string, name?: string) {
+  const ok = await authStore.switchAccount(id)
+  if (ok) {
+    message.success(`已切换至账号 ${name || ''}`)
+    showSwitchModal.value = false
+  } else {
+    message.error('切换账号失败，请重试')
+  }
+}
+
+// 从本机移除历史账号凭据
+async function handleDeleteAccount(id: string) {
+  const ok = await authStore.deleteAccount(id)
+  if (ok) {
+    message.success('已从本机移除该账号凭据')
+  } else {
+    message.error('移除账号凭据失败')
+  }
+}
+
+// 从切换弹窗跳转到添加新账号
+function handleAddAccountFromSwitch() {
+  showSwitchModal.value = false
+  openLoginModal()
+}
 
 // DeepSeek 登录相关状态
 const showLoginModal = ref(false)
@@ -352,19 +473,16 @@ const loggingOutSkill = ref(false)
 const skillAuthCode = ref('')
 const skillAuthPort = ref('')
 
-// 查询 DeepSeek 账号状态
-async function fetchAccountStatus(showTip = false) {
-  refreshing.value = true
-  try {
-    const res = await accountApi.getStatus()
-    if (res.success && res.data) {
-      accountStatus.value = res.data
-      if (showTip) message.success('账号状态已更新')
-    }
-  } catch (_) {
-    if (showTip) message.error('获取账号状态失败')
-  } finally {
-    refreshing.value = false
+// 手动刷新账号状态
+async function handleManualRefresh() {
+  const [statusOk, poolOk] = await Promise.all([
+    authStore.fetchAccountStatus(false),
+    authStore.fetchAccountPool(true)
+  ])
+  if (statusOk || poolOk) {
+    message.success('账号状态已更新')
+  } else {
+    message.error('获取账号状态失败')
   }
 }
 
@@ -417,7 +535,10 @@ async function submitCallback(urlText: string) {
       message.success('DeepSeek 账号授权绑定成功')
       showLoginModal.value = false
       callbackUrlInput.value = ''
-      await fetchAccountStatus()
+      await Promise.all([
+        authStore.fetchAccountStatus(true),
+        authStore.fetchAccountPool(true)
+      ])
     } else {
       message.error(res.message || '授权绑定失败')
     }
@@ -440,7 +561,11 @@ async function handleAccountLogout() {
     const res = await accountApi.logout()
     if (res.success) {
       message.success('已退出 DeepSeek 账号')
-      await fetchAccountStatus()
+      authStore.resetAccountStatus()
+      await Promise.all([
+        authStore.fetchAccountStatus(true),
+        authStore.fetchAccountPool(true)
+      ])
     } else {
       message.error(res.message || '退出登录失败')
     }
@@ -523,7 +648,14 @@ async function handleSkillLogout() {
 }
 
 onMounted(() => {
-  fetchAccountStatus()
+  authStore.fetchAccountStatus(true)
+  authStore.fetchAccountPool(true)
+  configStore.fetchConfig()
+})
+
+onActivated(() => {
+  authStore.fetchAccountStatus(true)
+  authStore.fetchAccountPool(true)
   configStore.fetchConfig()
 })
 </script>
