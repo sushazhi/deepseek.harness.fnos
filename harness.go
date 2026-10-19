@@ -374,6 +374,11 @@ func GetDshSessionCookie() string {
 // exchangeDshSessionCookie 使用启动令牌向本地服务换取会话凭据
 func exchangeDshSessionCookie(token string) string {
 	dshSessionMu.Lock()
+	if cachedDshCookie != "" {
+		c := cachedDshCookie
+		dshSessionMu.Unlock()
+		return c
+	}
 	dshSessionLastTry = time.Now()
 	dshSessionMu.Unlock()
 	port := GetConfig().GetServerPort()
@@ -457,7 +462,9 @@ func startLocked() error {
 		inner: NewLogWriterInfo(),
 		onLine: func(line string) {
 			if m := launchTokenRe.FindStringSubmatch(line); len(m) > 1 {
-				SetCurrentLaunchToken(m[1])
+				tok := m[1]
+				SetCurrentLaunchToken(tok)
+				go exchangeDshSessionCookie(tok)
 			}
 		},
 	}
@@ -595,6 +602,9 @@ func waitAndActivateReverseProxy(mp *managedProcess, port int) {
 	targetURL := fmt.Sprintf("http://127.0.0.1:%d", port)
 	client := &http.Client{
 		Timeout: 500 * time.Millisecond,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 
 	ticker := time.NewTicker(200 * time.Millisecond)
@@ -621,14 +631,35 @@ func waitAndActivateReverseProxy(mp *managedProcess, port int) {
 			resp, err := client.Get(targetURL)
 			ready := false
 			if err == nil {
+				statusCode := resp.StatusCode
 				_ = resp.Body.Close()
-				ready = true
+
+				switch statusCode {
+				case http.StatusOK, http.StatusFound, http.StatusSeeOther:
+					// 响应正常无需鉴权，直接就绪
+					ready = true
+				case http.StatusUnauthorized:
+					// 上游需要凭据鉴权，必须等待 Launch Token 捕获并完成会话预热
+					if token := GetCurrentLaunchToken(); token != "" {
+						if cookie := GetDshSessionCookie(); cookie != "" {
+							ready = true
+						}
+					}
+				default:
+					// 其他状态码（如 404/500 等启动过渡期）
+					if token := GetCurrentLaunchToken(); token != "" {
+						if cookie := GetDshSessionCookie(); cookie != "" {
+							ready = true
+						}
+					} else {
+						ready = true
+					}
+				}
 			} else {
 				// 兜底尝试 TCP 握手是否已开放监听
 				conn, dialErr := net.DialTimeout("tcp", fmt.Sprintf("127.0.0.1:%d", port), 200*time.Millisecond)
 				if dialErr == nil {
 					_ = conn.Close()
-					ready = true
 				}
 			}
 
