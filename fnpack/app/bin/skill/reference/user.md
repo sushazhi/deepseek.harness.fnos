@@ -9,7 +9,7 @@ Docker 模块申请 `trim.*` scope；完整列表见 `oauth.md`。
 生产环境只使用交互式登录：
 
 ```bash
-trim-cli --profile home --host <host> --port <port> login
+trim-cli --host <host> --port <port> login
 ```
 
 CLI 输出授权链接并在当前 profile 保存一次性 PKCE verifier，然后保持运行并等待
@@ -32,7 +32,7 @@ Session 保存以下认证信息：
 普通已认证命令会在 access token 临近过期时自动调用 refresh。也可以显式执行：
 
 ```bash
-trim-cli --profile home login --refresh
+trim-cli login --refresh
 ```
 
 refresh 响应没有返回新 refresh token 时，CLI 保留已有 refresh token。刷新前会先确认当前
@@ -42,7 +42,7 @@ profile 的 session 存储可写；预检失败时停止当前命令，不发送
 `logout` 只清除当前 profile 的本地 session，不表示服务端 token 已撤销：
 
 ```bash
-trim-cli --profile home logout
+trim-cli logout
 ```
 
 ## 当前用户与列表

@@ -65,6 +65,7 @@ loopback 为 `http://localhost:5666`；远程 IP 默认 HTTPS 5667，域名默�
 
 - **凭据已由宿主系统自动托管**：DSH 环境变量（`PATH`）与授权凭据（`HOME`）已由系统在后台打通，Agent 可直接执行查询与操作命令，无需手动配置。
 - **严禁在会话中执行交互式登录**：会话工具无法向子进程输入验证码，**严禁执行 `trim-cli login`**（会导致命令无限挂起直至超时）。
+- **无需且严禁指定 profile**：宿主托管授权绑定默认 profile，执行命令直接调用 `trim-cli <subcommand>`，不要添加 `--profile` 参数。
 - **未授权时引导用户在设置页授权**：若执行命令遇到未授权（`unauthorized`）或凭据失效，必须停止执行命令，并明确回复引导用户前往 **「应用设置」界面的「飞牛官方 TRIM CLI 技能」处点击「登录授权」** 完成绑定。
 
 会话凭据临期时会自动刷新；如需排查会话状态或退出：
@@ -78,19 +79,19 @@ trim-cli logout
 ## 常用只读命令
 
 ```bash
-trim-cli --profile home system info
-trim-cli --profile home file ls /vol1
-trim-cli --profile home file ls-dir /vol1
-trim-cli --profile home file usage 1
-trim-cli --profile home photos folders
-trim-cli --profile home photos search <keyword> --limit 20
-trim-cli --profile home app list
-trim-cli --profile home docker image ls
-trim-cli --profile home download ls
-trim-cli --profile home monitor cpu
-trim-cli --profile home monitor beep-supported
-trim-cli --profile home storage pools
-trim-cli --profile home user info
+trim-cli system info
+trim-cli file ls /vol1
+trim-cli file ls-dir /vol1
+trim-cli file usage 1
+trim-cli photos folders
+trim-cli photos search <keyword> --limit 20
+trim-cli app list
+trim-cli docker image ls
+trim-cli download ls
+trim-cli monitor cpu
+trim-cli monitor beep-supported
+trim-cli storage pools
+trim-cli user info
 ```
 
 ## 原始请求

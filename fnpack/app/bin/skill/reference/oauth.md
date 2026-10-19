@@ -11,7 +11,7 @@
 ## 登录
 
 ```bash
-trim-cli --profile home --host <host> --port <port> login
+trim-cli --host <host> --port <port> login
 ```
 
 生产环境只使用这一条交互式流程：CLI 输出 `/signin` 授权链接并保持运行；用户自行在浏览器
@@ -29,7 +29,7 @@ verifier 按 profile 隔离，过期后必须重新运行完整的交互式 `log
 ## Refresh
 
 ```bash
-trim-cli --profile home login --refresh
+trim-cli login --refresh
 ```
 
 命令开始前 access token 在 60 秒内过期会自动 refresh。代理 `/ogh/ac/w` 或原生 HTTP

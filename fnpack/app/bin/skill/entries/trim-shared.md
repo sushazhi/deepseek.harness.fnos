@@ -44,13 +44,13 @@ description: 当任务涉及登录、连接目标、session 回落、wrapper 用
 ## 常用命令
 
 ```bash
-trim-cli --profile home --host <host> --port <port> login
-trim-cli --profile home --host <host> --port <port> login --no-open
+trim-cli --host <host> --port <port> login
+trim-cli --host <host> --port <port> login --no-open
 trim-cli --host <host> --scheme https --tls-insecure login
-trim-cli --profile home system info
-trim-cli --profile home raw appcgi.system.getInfo --json '{"language":"zh-CN"}'
-trim-cli --profile home raw appcgi.network.ssh.switch --json '{"enable":true}' --yes
-trim-cli --profile home logout
+trim-cli system info
+trim-cli raw appcgi.system.getInfo --json '{"language":"zh-CN"}'
+trim-cli raw appcgi.network.ssh.switch --json '{"enable":true}' --yes
+trim-cli logout
 ```
 
 `raw` 采用默认保护策略：只有 CLI 内置、已审计的只读端点可以省略 `--yes`；其他端点及
