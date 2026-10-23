@@ -535,10 +535,9 @@ async function submitCallback(urlText: string) {
       message.success('DeepSeek 账号授权绑定成功')
       showLoginModal.value = false
       callbackUrlInput.value = ''
-      await Promise.all([
-        authStore.fetchAccountStatus(true),
-        authStore.fetchAccountPool(true)
-      ])
+      // 账号状态查询会将新凭据归档到账号池，需先完成再拉取账号池，避免读到旧列表
+      await authStore.fetchAccountStatus(true)
+      await authStore.fetchAccountPool(true)
     } else {
       message.error(res.message || '授权绑定失败')
     }

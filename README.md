@@ -28,7 +28,7 @@
 
 ## 技术架构
 
-- **后端**：Go 1.23 + Gin Web 框架 + Gorilla WebSocket + Linux 进程管理
+- **后端**：Go 1.27.3 + Gin Web 框架 + Gorilla WebSocket + Linux 进程管理
 - **前端**：Vue 3 + TypeScript + Naive UI + Pinia + Tailwind CSS + Vite
 - **打包规范**：飞牛 fnOS 原生应用包规范（`fnpack`）
 

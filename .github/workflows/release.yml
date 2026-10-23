@@ -212,7 +212,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.27.3'
 
       - name: Download amd64 Runtime Artifact
         uses: actions/download-artifact@v4

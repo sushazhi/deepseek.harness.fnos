@@ -360,6 +360,53 @@ func handleAccountLoginStart(c *gin.Context) {
 	})
 }
 
+// AccountSignInSnapshot DSH 登录尝试快照
+type AccountSignInSnapshot struct {
+	Phase     string
+	ErrorCode string
+}
+
+// fetchAccountSignInSnapshot 查询 DSH 当前登录尝试的阶段
+func fetchAccountSignInSnapshot() (AccountSignInSnapshot, error) {
+	rawState, err := callDshRpc("account/getState", map[string]any{})
+	if err != nil {
+		return AccountSignInSnapshot{}, err
+	}
+
+	var data struct {
+		Attempt *struct {
+			Phase     string `json:"phase"`
+			ErrorCode string `json:"errorCode"`
+		} `json:"attempt"`
+	}
+	if err := json.Unmarshal(rawState, &data); err != nil {
+		return AccountSignInSnapshot{}, err
+	}
+
+	snapshot := AccountSignInSnapshot{}
+	if data.Attempt != nil {
+		snapshot.Phase = data.Attempt.Phase
+		snapshot.ErrorCode = data.Attempt.ErrorCode
+	}
+	return snapshot, nil
+}
+
+// signInErrorText 将 DSH 登录失败码转换为用户可读原因
+func signInErrorText(code string) string {
+	switch code {
+	case "no-response", "network":
+		return "无法连接 DeepSeek 授权服务，请稍后重试"
+	case "expired":
+		return "登录会话已过期，请重新发起登录"
+	case "storage":
+		return "本地凭据写入失败，请检查数据目录权限"
+	case "protocol":
+		return "授权响应校验失败，请重新授权"
+	default:
+		return "登录授权未完成，请重新发起登录"
+	}
+}
+
 // handleAccountLoginConfirm 接收回调地址并向 DSH 内部完成兑换
 func handleAccountLoginConfirm(c *gin.Context) {
 	var req struct {
@@ -443,9 +490,45 @@ func handleAccountLoginConfirm(c *gin.Context) {
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther {
+	// DSH 失败时同样返回 HTTP 200（HTML 提示页），必须以登录尝试的真实阶段判定结果
+	snapshot, stateErr := fetchAccountSignInSnapshot()
+	if stateErr != nil {
+		LogWarning("[账号] 查询登录结果失败: %v", stateErr)
+	}
+
+	LogInfo("[账号] 登录回调结果: phase=%s, errorCode=%s, httpStatus=%d", snapshot.Phase, snapshot.ErrorCode, resp.StatusCode)
+
+	// 回调参数被 DSH 拒绝时不会进入登录尝试，直接按参数错误返回
+	if resp.StatusCode == http.StatusBadRequest {
+		Fail(c, http.StatusBadRequest, "授权回调被拒绝，请确认回调地址中的 code 与 state 完整有效")
+		return
+	}
+
+	switch snapshot.Phase {
+	case "succeeded":
 		LogInfo("[账号] DeepSeek 官方账号授权兑换成功")
 		OK(c, gin.H{"message": "登录授权成功"})
+		return
+	case "failed":
+		Fail(c, http.StatusBadRequest, "登录授权失败："+signInErrorText(snapshot.ErrorCode))
+		return
+	case "expired":
+		Fail(c, http.StatusGone, "登录会话已过期，请重新发起登录")
+		return
+	case "cancelled":
+		Fail(c, http.StatusBadRequest, "登录授权已取消，请重新发起登录")
+		return
+	}
+
+	// 阶段未知（例如状态查询失败）时回退到回调状态码：302 为 DSH 成功跳转，其余均视为未完成
+	if resp.StatusCode == http.StatusFound || resp.StatusCode == http.StatusSeeOther {
+		LogInfo("[账号] DeepSeek 官方账号授权兑换成功")
+		OK(c, gin.H{"message": "登录授权成功"})
+		return
+	}
+
+	if resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNoContent {
+		Fail(c, http.StatusBadRequest, signInErrorText(snapshot.ErrorCode))
 		return
 	}
 
